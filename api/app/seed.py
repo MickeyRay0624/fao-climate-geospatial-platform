@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 
 from geoalchemy2.shape import from_shape
+from minio.error import S3Error
 from shapely.geometry import MultiPolygon, Polygon, box
 from sqlalchemy import func, select
 
@@ -23,7 +24,7 @@ from app.models import (
     Dataset,
     IndicatorValue,
 )
-from app.object_store import ensure_bucket, put_bytes
+from app.object_store import ensure_bucket, get_bytes, put_bytes
 
 
 RANDOM_SEED = 260826
@@ -351,10 +352,24 @@ def seed() -> None:
 
         payload = version_geojson_bytes(session, version.id)
         object_key = f"datasets/{dataset.id}/versions/{version.id}/{version.source_filename}"
-        put_bytes(object_key, payload, "application/geo+json")
+        # The original compatibility source is immutable evidence.  Seeding may
+        # create it once, but it must never silently replace an existing object.
+        try:
+            stored_payload = get_bytes(object_key)
+        except S3Error as error:
+            if error.code not in {"NoSuchKey", "NoSuchObject", "NotFound"}:
+                raise
+            put_bytes(object_key, payload, "application/geo+json")
+            stored_payload = payload
+        if stored_payload != payload:
+            raise RuntimeError(
+                "Refusing to overwrite the immutable legacy source object: "
+                f"{object_key} has checksum {hashlib.sha256(stored_payload).hexdigest()}, "
+                f"while the deterministic seed produced {hashlib.sha256(payload).hexdigest()}."
+            )
         version.object_key = object_key
-        version.file_size = len(payload)
-        version.checksum_sha256 = hashlib.sha256(payload).hexdigest()
+        version.file_size = len(stored_payload)
+        version.checksum_sha256 = hashlib.sha256(stored_payload).hexdigest()
         version.record_count = (
             session.scalar(
                 select(func.count(AdminArea.id)).where(
