@@ -1,0 +1,14 @@
+erDiagram
+  METHOD_DEFINITIONS ||--o{ METHOD_VERSIONS : versions
+  METHOD_VERSIONS ||--o{ SCENARIOS : constrains
+  SCENARIOS ||--o{ SCENARIO_PARAMETERS : freezes
+  INPUT_SETS ||--o{ INPUT_MEMBERS : contains
+  INPUT_SETS ||--o{ ANALYSIS_RUNS : selected_by
+  METHOD_VERSIONS ||--o{ ANALYSIS_RUNS : executes
+  SCENARIOS ||--o{ ANALYSIS_RUNS : parameterises
+  ANALYSIS_RUNS ||--o{ ANALYSIS_RUN_INPUTS : snapshots
+  ANALYSIS_RUNS ||--o{ PRIORITY_RESULTS : produces
+  ANALYSIS_RUNS ||--o{ RUN_COMPARISONS : left_run
+  ANALYSIS_RUNS ||--o{ RUN_COMPARISONS : right_run
+  ANALYSIS_RUNS }o--|| CATALOG_DATASET_VERSIONS : registers_output
+  ANALYSIS_RUN_INPUTS }o--|| CATALOG_DATASET_VERSIONS : uses_exact_input

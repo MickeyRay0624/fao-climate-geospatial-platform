@@ -76,7 +76,20 @@ docker compose run --rm migrate alembic current
 docker compose run --rm migrate alembic upgrade head
 ```
 
-The current head is `20260831_0002`. Downgrade is intentionally prohibited; follow the restore runbook for rollback.
+The current head is `20260831_0003`. Downgrade is intentionally prohibited; follow the restore runbook for rollback.
+
+Verify the repeatable Phase 2A backfill and exact reconciliation:
+
+```bash
+docker compose run --rm --no-deps api \
+  python -m app.investment.backfill_legacy --verify --materialise-outputs
+```
+
+The Celery worker must consume both `celery` and `geospatial-analysis`. Inspect queues with:
+
+```bash
+docker compose exec -T worker celery -A app.jobs.celery_app inspect active_queues
+```
 
 ## Optional GeoServer
 
