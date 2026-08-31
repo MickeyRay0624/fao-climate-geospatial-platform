@@ -1,0 +1,15 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {"code": "PILOT-01", "name": "Kampong Thom verification point", "drought_index": 0.62},
+      "geometry": {"type": "Point", "coordinates": [104.8885, 12.1991]}
+    },
+    {
+      "type": "Feature",
+      "properties": {"code": "PILOT-02", "name": "Prey Veng verification point", "drought_index": 0.48},
+      "geometry": {"type": "Point", "coordinates": [105.3254, 11.4868]}
+    }
+  ]
+}

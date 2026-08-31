@@ -16,6 +16,14 @@ from app.models import (
     DataVersion,
     IndicatorValue,
 )
+from app.platform_models import (
+    CatalogAsset,
+    CatalogDataset,
+    CatalogDatasetVersion,
+    LegacyIdMapping,
+    QualityRun,
+    User,
+)
 
 
 def slugify(value: str) -> str:
@@ -101,54 +109,163 @@ def serialise_dataset(dataset: DataCatalogItem) -> dict[str, Any]:
 
 
 def catalog_payload(session: Session) -> dict[str, Any]:
-    datasets = session.scalars(
-        select(DataCatalogItem)
-        .options(
-            selectinload(DataCatalogItem.versions).selectinload(
-                DataVersion.quality_checks
+    """Adapt the authoritative platform catalog to the legacy investment shape.
+
+    Only deterministically mapped versions can be consumed by the integer-ID
+    investment read model. New catalog records remain visible in the Data Hub,
+    while this adapter keeps the existing module stable without dual writes.
+    """
+
+    dataset_mappings = {
+        mapping.new_id: int(mapping.legacy_id)
+        for mapping in session.scalars(
+            select(LegacyIdMapping).where(
+                LegacyIdMapping.entity_type == "data_catalog_items"
             )
+        ).all()
+        if mapping.legacy_id.isdigit()
+    }
+    version_mappings = {
+        mapping.new_id: int(mapping.legacy_id)
+        for mapping in session.scalars(
+            select(LegacyIdMapping).where(
+                LegacyIdMapping.entity_type == "data_versions"
+            )
+        ).all()
+        if mapping.legacy_id.isdigit()
+    }
+    platform_datasets = session.scalars(
+        select(CatalogDataset)
+        .where(
+            CatalogDataset.id.in_(list(dataset_mappings)),
+            CatalogDataset.lifecycle_status != "ARCHIVED",
         )
-        .order_by(DataCatalogItem.created_at.desc(), DataCatalogItem.id.desc())
+        .order_by(CatalogDataset.created_at.desc())
     ).all()
-    all_versions = [version for dataset in datasets for version in dataset.versions]
+    datasets: list[dict[str, Any]] = []
+    all_versions: list[dict[str, Any]] = []
+    state_map = {
+        "DRAFT": "draft",
+        "UPLOADING": "draft",
+        "PROCESSING": "draft",
+        "VALIDATION_FAILED": "draft",
+        "VALIDATED": "validated",
+        "IN_REVIEW": "validated",
+        "CHANGES_REQUESTED": "draft",
+        "APPROVED": "validated",
+        "PUBLISHED": "published",
+        "DEPRECATED": "archived",
+        "ARCHIVED": "archived",
+    }
+    for platform_dataset in platform_datasets:
+        owner = session.get(User, platform_dataset.owner_user_id)
+        version_rows: list[dict[str, Any]] = []
+        platform_versions = session.scalars(
+            select(CatalogDatasetVersion)
+            .where(
+                CatalogDatasetVersion.dataset_id == platform_dataset.id,
+                CatalogDatasetVersion.id.in_(list(version_mappings)),
+            )
+            .order_by(CatalogDatasetVersion.created_at.desc())
+        ).all()
+        for platform_version in platform_versions:
+            legacy_id = version_mappings[platform_version.id]
+            legacy_version = session.scalar(
+                select(DataVersion)
+                .options(selectinload(DataVersion.quality_checks))
+                .where(DataVersion.id == legacy_id)
+            )
+            if legacy_version is None:
+                continue
+            asset = session.scalar(
+                select(CatalogAsset)
+                .where(
+                    CatalogAsset.dataset_version_id == platform_version.id,
+                    CatalogAsset.role == "source",
+                )
+                .order_by(CatalogAsset.created_at)
+                .limit(1)
+            )
+            quality = session.scalar(
+                select(QualityRun)
+                .where(QualityRun.dataset_version_id == platform_version.id)
+                .order_by(QualityRun.completed_at.desc().nulls_last())
+                .limit(1)
+            )
+            summary = quality.summary_json if quality else quality_summary(legacy_version)
+            status = state_map.get(platform_version.state, "draft")
+            payload = {
+                **serialise_version(legacy_version),
+                "version_label": platform_version.version_label,
+                "status": status,
+                "is_current": platform_dataset.current_published_version_id == platform_version.id,
+                "source_filename": asset.filename if asset else legacy_version.source_filename,
+                "file_size": asset.size_bytes if asset else legacy_version.file_size,
+                "media_type": asset.media_type if asset else legacy_version.media_type,
+                "checksum_sha256": asset.sha256 if asset else legacy_version.checksum_sha256,
+                "notes": platform_version.change_summary,
+                "uploaded_by": owner.display_name if owner else legacy_version.uploaded_by,
+                "quality_summary": {
+                    "passed": int(summary.get("passed", 0)),
+                    "warning": int(summary.get("warning", summary.get("warnings", 0))),
+                    "failed": int(summary.get("failed", summary.get("blocking", 0))),
+                },
+                "analysis_ready": status == "published" and legacy_version.record_count > 0,
+            }
+            version_rows.append(payload)
+            all_versions.append(payload)
+        datasets.append(
+            {
+                "id": dataset_mappings[platform_dataset.id],
+                "slug": platform_dataset.slug,
+                "name": platform_dataset.title,
+                "description": platform_dataset.abstract,
+                "data_kind": platform_dataset.data_kind,
+                "owner": owner.display_name if owner else "Legacy attribution",
+                "created_at": platform_dataset.created_at.isoformat() if platform_dataset.created_at else None,
+                "current_version_id": next(
+                    (version["id"] for version in version_rows if version["is_current"]),
+                    None,
+                ),
+                "versions": version_rows,
+            }
+        )
     return {
-        "datasets": [serialise_dataset(dataset) for dataset in datasets],
+        "datasets": datasets,
         "summary": {
             "datasets": len(datasets),
             "versions": len(all_versions),
             "published_versions": sum(
-                1 for version in all_versions if version.status == "published"
+                1 for version in all_versions if version["status"] == "published"
             ),
-            "stored_bytes": sum(version.file_size for version in all_versions),
+            "stored_bytes": sum(version["file_size"] for version in all_versions),
             "quality_warnings": sum(
-                quality_summary(version).get("warning", 0) for version in all_versions
+                version["quality_summary"].get("warning", 0) for version in all_versions
             ),
             "failed_versions": sum(
                 1
                 for version in all_versions
-                if quality_summary(version).get("failed", 0) > 0
+                if version["quality_summary"].get("failed", 0) > 0
             ),
         },
     }
 
 
 def available_analysis_versions(session: Session) -> list[dict[str, Any]]:
-    rows = session.execute(
-        select(DataVersion, DataCatalogItem)
-        .join(DataCatalogItem, DataCatalogItem.id == DataVersion.dataset_id)
-        .options(selectinload(DataVersion.quality_checks))
-        .where(DataVersion.status == "published", DataVersion.record_count > 0)
-        .order_by(DataVersion.is_current.desc(), DataVersion.id.desc())
-    ).all()
-    return [
+    catalog = catalog_payload(session)
+    rows = [
         {
-            **serialise_version(version, include_checks=False),
-            "dataset_name": dataset.name,
-            "dataset_description": dataset.description,
-            "display_name": f"{dataset.name} · {version.version_label}",
+            **version,
+            "quality_checks": [],
+            "dataset_name": dataset["name"],
+            "dataset_description": dataset["description"],
+            "display_name": f"{dataset['name']} · {version['version_label']}",
         }
-        for version, dataset in rows
+        for dataset in catalog["datasets"]
+        for version in dataset["versions"]
+        if version["status"] == "published" and version["record_count"] > 0
     ]
+    return sorted(rows, key=lambda item: (not item["is_current"], -item["id"]))
 
 
 def import_parsed_records(
@@ -202,4 +319,3 @@ def count_version_areas(session: Session, version_id: int) -> int:
         )
         or 0
     )
-

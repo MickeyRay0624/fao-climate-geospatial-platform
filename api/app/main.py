@@ -1,59 +1,76 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
 import json
+import logging
+import uuid
 from collections import defaultdict
-from pathlib import Path
 from typing import Any
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import func, select, text
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.analysis import calculate_priorities, normalise_weights
 from app.catalog import INDICATORS, SCENARIOS
-from app.config import CORS_ORIGINS, DEMO_DISCLAIMER, MAX_UPLOAD_BYTES
+from app.config import (
+    ALLOW_INSECURE_DEV_FILE_SCAN,
+    AUTH_MODE,
+    CORS_ORIGINS,
+    DEMO_DISCLAIMER,
+)
+from app.audit_service import record_event
+from app.authorization import assert_permission
 from app.data_management import (
     available_analysis_versions,
     catalog_payload,
-    import_parsed_records,
-    publish_version,
-    serialise_dataset,
     serialise_version,
-    unique_slug,
 )
-from app.database import get_session
-from app.ingestion import parse_upload, supported_media_type
-from app.migrations import ensure_schema
+from app.database import SessionLocal, get_session
+from app.errors import PlatformError
+from app.identity import Principal, get_current_principal
+from app.logging_config import configure_logging
 from app.models import (
     AdminArea,
     AnalysisRun,
-    DataCatalogItem,
-    DataQualityCheck,
     DataVersion,
     Dataset,
     IndicatorValue,
     PriorityResult,
 )
-from app.object_store import ensure_bucket, get_bytes, put_bytes, remove_object
+from app.object_store import ensure_bucket, get_bytes
 from app.schemas import AnalysisRequest
+from app.datahub.router import router as datahub_router
+from app.platform_router import (
+    audit_router,
+    core_router,
+    dependency_health,
+    governance_router,
+    jobs_router,
+)
 
 
-ensure_schema()
+configure_logging()
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Cambodia Spatial Data & Rice Prioritisation API",
-    version="0.2.0",
+    title="FAO Climate Geospatial Data & Decision Platform API",
+    version="1.0.0-phase1",
     description=(
         "Versioned spatial data management and transparent multi-criteria analysis "
         "for a local demonstrator."
     ),
 )
+
+app.include_router(core_router)
+app.include_router(datahub_router)
+app.include_router(jobs_router)
+app.include_router(audit_router)
+app.include_router(governance_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,6 +79,84 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def correlation_middleware(request: Request, call_next):
+    supplied = request.headers.get("X-Correlation-ID", "")
+    request.state.correlation_id = (
+        supplied[:64] if supplied and re_safe_correlation(supplied) else str(uuid.uuid4())
+    )
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = request.state.correlation_id
+    logger.info(
+        "request.complete",
+        extra={
+            "correlation_id": request.state.correlation_id,
+            "action": f"{request.method} {request.url.path}",
+        },
+    )
+    return response
+
+
+def re_safe_correlation(value: str) -> bool:
+    return len(value) <= 64 and all(character.isalnum() or character in "-_." for character in value)
+
+
+def error_envelope(request: Request, code: str, message: str, details: dict[str, Any], status_code: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "code": code,
+                "message": message,
+                "details": details,
+                "correlation_id": getattr(request.state, "correlation_id", "unknown"),
+            }
+        },
+    )
+
+
+@app.exception_handler(PlatformError)
+async def platform_error_handler(request: Request, error: PlatformError) -> JSONResponse:
+    principal = getattr(request.state, "principal", None)
+    if principal is not None and error.status_code in {403, 404}:
+        try:
+            with SessionLocal() as audit_session:
+                record_event(
+                    audit_session,
+                    action="security.access.denied",
+                    resource_type="api_route",
+                    resource_id=request.url.path,
+                    outcome="denied",
+                    correlation_id=getattr(request.state, "correlation_id", "unknown"),
+                    actor_id=principal.user_id,
+                    workspace_id=principal.active_workspace_id,
+                    reason=error.code,
+                    after={"method": request.method},
+                    severity="WARNING",
+                )
+                audit_session.commit()
+        except Exception:
+            logger.exception(
+                "security.denial_audit_failed",
+                extra={"correlation_id": getattr(request.state, "correlation_id", "unknown")},
+            )
+    return error_envelope(request, error.code, error.message, error.details, error.status_code)
+
+
+@app.exception_handler(HTTPException)
+async def http_error_handler(request: Request, error: HTTPException) -> JSONResponse:
+    code = {400: "BAD_REQUEST", 401: "AUTHENTICATION_REQUIRED", 403: "FORBIDDEN", 404: "RESOURCE_NOT_FOUND", 409: "CONFLICT"}.get(error.status_code, "HTTP_ERROR")
+    message = error.detail if isinstance(error.detail, str) else "The request could not be completed."
+    details = error.detail if isinstance(error.detail, dict) else {}
+    return error_envelope(request, code, message, details, error.status_code)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, error: RequestValidationError) -> JSONResponse:
+    details = {"issues": [{"location": list(item["loc"]), "message": item["msg"], "type": item["type"]} for item in error.errors()]}
+    return error_envelope(request, "REQUEST_VALIDATION_FAILED", "The request did not match the API contract.", details, 422)
 
 
 def indicator_lookup(
@@ -132,6 +227,7 @@ def ranking_rows(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "population": record["population"],
             "rank": record["rank"],
             "score": record["score"],
+            "eligible": record["eligible"],
             "priority_band": record["priority_band"],
             "rice_area_ha": record["rice_area_ha"],
             "data_quality": record["data_quality"],
@@ -261,21 +357,39 @@ def get_version_with_checks(session: Session, version_id: int) -> DataVersion:
 @app.get("/")
 def root() -> dict[str, str]:
     return {
-        "name": "Cambodia Spatial Data & Rice Prioritisation API",
+        "name": "FAO Climate Geospatial Data & Decision Platform API",
         "docs": "/docs",
         "health": "/health",
     }
 
 
 @app.get("/health")
-def health(session: Session = Depends(get_session)) -> dict[str, str]:
+def health(session: Session = Depends(get_session)) -> dict[str, Any]:
     session.execute(text("SELECT 1"))
     ensure_bucket()
-    return {"status": "ok", "database": "ok", "object_storage": "ok"}
+    dependencies = dependency_health()
+    warnings = []
+    if dependencies["worker"] != "ok":
+        warnings.append("worker heartbeat unavailable")
+    if ALLOW_INSECURE_DEV_FILE_SCAN:
+        warnings.append("development file-scan bypass enabled")
+    return {
+        "status": "healthy_with_warnings" if warnings else "ok",
+        "database": "ok",
+        "object_storage": "ok",
+        **dependencies,
+        "auth_mode": AUTH_MODE,
+        "file_scanner": "development_bypass" if ALLOW_INSECURE_DEV_FILE_SCAN else "approved_scanner_required",
+        "warnings": warnings,
+    }
 
 
 @app.get("/api/catalog")
-def catalog(session: Session = Depends(get_session)) -> dict[str, Any]:
+def catalog(
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "apps.investment.use", "investment-prioritisation")
     indicator_sources = session.scalars(
         select(Dataset).order_by(Dataset.indicator_code)
     ).all()
@@ -305,16 +419,24 @@ def catalog(session: Session = Depends(get_session)) -> dict[str, Any]:
 
 
 @app.get("/api/data-catalog")
-def data_catalog(session: Session = Depends(get_session)) -> dict[str, Any]:
+def data_catalog(
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "data.catalog.enter")
     return catalog_payload(session)
 
 
 @app.get("/api/data-versions/available")
-def analysis_versions(session: Session = Depends(get_session)) -> list[dict[str, Any]]:
+def analysis_versions(
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> list[dict[str, Any]]:
+    assert_permission(principal, "apps.investment.use", "investment-prioritisation")
     return available_analysis_versions(session)
 
 
-@app.post("/api/data-catalog/upload")
+@app.post("/api/data-catalog/upload", deprecated=True)
 async def upload_dataset_version(
     file: UploadFile = File(...),
     dataset_name: str = Form(""),
@@ -323,143 +445,51 @@ async def upload_dataset_version(
     dataset_id: int | None = Form(None),
     notes: str = Form(""),
     uploaded_by: str = Form("Mickey Lei"),
+    principal: Principal = Depends(get_current_principal),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    safe_filename = Path(file.filename or "upload").name
-    payload = await file.read(MAX_UPLOAD_BYTES + 1)
-    if len(payload) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="Upload exceeds the 25 MB MVP limit")
-    if not payload:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
-
-    clean_version = version_label.strip()
-    if not clean_version:
-        raise HTTPException(status_code=400, detail="Version label is required")
-
-    if dataset_id is not None:
-        dataset = session.get(DataCatalogItem, dataset_id)
-        if dataset is None:
-            raise HTTPException(status_code=404, detail="Dataset not found")
-    else:
-        clean_name = dataset_name.strip()
-        if not clean_name:
-            raise HTTPException(
-                status_code=400, detail="Dataset name is required for a new dataset"
-            )
-        dataset = DataCatalogItem(
-            slug=unique_slug(session, clean_name),
-            name=clean_name,
-            description=description.strip(),
-            data_kind="analysis_bundle",
-            owner="DSS team",
-        )
-        session.add(dataset)
-        session.flush()
-
-    duplicate = session.scalar(
-        select(DataVersion.id).where(
-            DataVersion.dataset_id == dataset.id,
-            DataVersion.version_label == clean_version,
-        )
+    assert_permission(principal, "dataset.upload_version")
+    raise PlatformError(
+        "LEGACY_CATALOG_READ_ONLY",
+        "The legacy multipart catalog is read-only. Use the Data Hub direct-upload workflow.",
+        410,
+        {"replacement": "/api/data/v1/datasets"},
     )
-    if duplicate:
-        raise HTTPException(
-            status_code=409, detail="This dataset already has that version label"
-        )
-
-    parsed = parse_upload(safe_filename, payload)
-    checksum = hashlib.sha256(payload).hexdigest()
-    version = DataVersion(
-        dataset_id=dataset.id,
-        version_label=clean_version,
-        status="draft" if parsed.has_failures else "validated",
-        is_current=False,
-        source_filename=safe_filename,
-        object_key="pending",
-        checksum_sha256=checksum,
-        file_size=len(payload),
-        media_type=file.content_type or supported_media_type(safe_filename),
-        record_count=0 if parsed.has_failures else len(parsed.records),
-        schema_summary=parsed.schema_summary,
-        notes=notes.strip(),
-        uploaded_by=uploaded_by.strip() or "DSS team member",
-    )
-    session.add(version)
-    session.flush()
-    object_key = f"datasets/{dataset.id}/versions/{version.id}/{safe_filename}"
-
-    try:
-        put_bytes(object_key, payload, version.media_type)
-        version.object_key = object_key
-        for check in parsed.checks:
-            version.quality_checks.append(
-                DataQualityCheck(
-                    check_code=check.code,
-                    check_name=check.name,
-                    status=check.status,
-                    severity=check.severity,
-                    details=check.details,
-                    affected_count=check.affected_count,
-                )
-            )
-        if not parsed.has_failures:
-            import_parsed_records(session, version, parsed)
-        session.commit()
-    except IntegrityError as error:
-        session.rollback()
-        remove_object(object_key)
-        raise HTTPException(
-            status_code=409, detail="The uploaded version contains conflicting records"
-        ) from error
-    except HTTPException:
-        raise
-    except Exception as error:
-        session.rollback()
-        remove_object(object_key)
-        raise HTTPException(
-            status_code=503, detail=f"Upload could not be stored: {error}"
-        ) from error
-
-    dataset = session.scalar(
-        select(DataCatalogItem)
-        .options(
-            selectinload(DataCatalogItem.versions).selectinload(
-                DataVersion.quality_checks
-            )
-        )
-        .where(DataCatalogItem.id == dataset.id)
-    )
-    if dataset is None:
-        raise HTTPException(status_code=500, detail="Dataset could not be reloaded")
-    return {"dataset": serialise_dataset(dataset), "uploaded_version_id": version.id}
 
 
-@app.post("/api/data-versions/{version_id}/publish")
+@app.post("/api/data-versions/{version_id}/publish", deprecated=True)
 def publish_dataset_version(
-    version_id: int, session: Session = Depends(get_session)
+    version_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
 ) -> dict[str, Any]:
-    version = get_version_with_checks(session, version_id)
-    try:
-        publish_version(session, version)
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    session.commit()
-    session.refresh(version)
-    return serialise_version(version)
+    assert_permission(principal, "dataset.publish")
+    raise PlatformError(
+        "LEGACY_CATALOG_READ_ONLY",
+        "Legacy versions cannot be published through this endpoint. Use the governed Data Hub review and publish workflow.",
+        410,
+        {"replacement": "/api/data/v1/versions/{version_id}/publish"},
+    )
 
 
 @app.get("/api/data-versions/{version_id}/preview")
 def preview_dataset_version(
-    version_id: int, session: Session = Depends(get_session)
+    version_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_permission(principal, "dataset.preview")
     get_version_with_checks(session, version_id)
     return feature_collection(load_area_records(session, version_id))
 
 
 @app.get("/api/data-versions/{version_id}/download")
 def download_dataset_version(
-    version_id: int, session: Session = Depends(get_session)
+    version_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
 ) -> Response:
+    assert_permission(principal, "dataset.download")
     version = get_version_with_checks(session, version_id)
     try:
         payload = get_bytes(version.object_key)
@@ -475,21 +505,29 @@ def download_dataset_version(
 
 @app.get("/api/areas")
 def areas(
-    dataset_version_id: int, session: Session = Depends(get_session)
+    dataset_version_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_permission(principal, "apps.investment.use", "investment-prioritisation")
     get_version_with_checks(session, dataset_version_id)
     return feature_collection(load_area_records(session, dataset_version_id))
 
 
 @app.get("/api/scenarios")
-def scenarios() -> dict[str, Any]:
+def scenarios(principal: Principal = Depends(get_current_principal)) -> dict[str, Any]:
+    assert_permission(principal, "apps.investment.use", "investment-prioritisation")
     return SCENARIOS
 
 
 @app.post("/api/analysis/run")
 def run_analysis(
-    request: AnalysisRequest, session: Session = Depends(get_session)
+    request: AnalysisRequest,
+    http_request: Request,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
 ) -> dict[str, Any]:
+    assert_permission(principal, "investment.run.create", "investment-prioritisation")
     scenario = SCENARIOS.get(request.scenario_key)
     if scenario is None:
         raise HTTPException(status_code=400, detail="Unknown scenario")
@@ -533,22 +571,67 @@ def run_analysis(
     return response_payload(run, records)
 
 
+@app.post("/api/analysis/preview")
+def preview_analysis(
+    request: AnalysisRequest,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Calculate the initial map without creating an analysis run."""
+
+    assert_permission(principal, "apps.investment.use", "investment-prioritisation")
+    scenario = SCENARIOS.get(request.scenario_key)
+    if scenario is None:
+        raise HTTPException(status_code=400, detail="Unknown scenario")
+    version = get_version_with_checks(session, request.dataset_version_id)
+    if version.status != "published":
+        raise HTTPException(status_code=409, detail="Only a published dataset version can be previewed")
+    weights = normalise_weights(request.weights or scenario["weights"])
+    records = calculate_priorities(load_area_records(session, version.id), weights, request.min_rice_area_ha)
+    return {
+        "run_id": 0,
+        "persisted": False,
+        "dataset_version": version_reference(version),
+        "scenario_key": request.scenario_key,
+        "weights": weights,
+        "min_rice_area_ha": request.min_rice_area_ha,
+        "created_at": None,
+        "summary": analysis_summary(records),
+        "ranking": ranking_rows(records),
+        "geojson": feature_collection(records),
+        "disclaimer": DEMO_DISCLAIMER,
+    }
+
+
 @app.get("/api/analysis/{run_id}")
-def get_analysis(run_id: int, session: Session = Depends(get_session)) -> dict[str, Any]:
+def get_analysis(
+    run_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "investment.run.view", "investment-prioritisation")
     run, records = load_persisted_run(session, run_id)
     return response_payload(run, records)
 
 
 @app.get("/api/analysis/{run_id}/ranking")
 def get_ranking(
-    run_id: int, session: Session = Depends(get_session)
+    run_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
 ) -> list[dict[str, Any]]:
+    assert_permission(principal, "investment.run.view", "investment-prioritisation")
     _, records = load_persisted_run(session, run_id)
     return ranking_rows(records)
 
 
 @app.get("/api/analysis/{run_id}/export.csv")
-def export_csv(run_id: int, session: Session = Depends(get_session)) -> Response:
+def export_csv(
+    run_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> Response:
+    assert_permission(principal, "investment.run.export", "investment-prioritisation")
     run, records = load_persisted_run(session, run_id)
     buffer = io.StringIO()
     fieldnames = [
@@ -596,7 +679,12 @@ def export_csv(run_id: int, session: Session = Depends(get_session)) -> Response
 
 
 @app.get("/api/analysis/{run_id}/export.geojson")
-def export_geojson(run_id: int, session: Session = Depends(get_session)) -> Response:
+def export_geojson(
+    run_id: int,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> Response:
+    assert_permission(principal, "investment.run.export", "investment-prioritisation")
     run, records = load_persisted_run(session, run_id)
     collection = feature_collection(records)
     collection["metadata"] = {
@@ -612,4 +700,3 @@ def export_geojson(run_id: int, session: Session = Depends(get_session)) -> Resp
             "Content-Disposition": f'attachment; filename="rice-priority-run-{run_id}.geojson"'
         },
     )
-

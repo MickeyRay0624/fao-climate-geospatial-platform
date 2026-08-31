@@ -1,4 +1,4 @@
-.PHONY: up down reset logs test geoserver
+.PHONY: up down logs test migrate seed geoserver
 
 up:
 	docker compose up --build
@@ -6,15 +6,17 @@ up:
 down:
 	docker compose down
 
-reset:
-	docker compose down -v
-	docker compose up --build
-
 logs:
-	docker compose logs -f api web
+	docker compose logs -f api worker web
 
 test:
 	docker compose run --rm --no-deps api python -m pytest -q
+
+migrate:
+	docker compose run --rm migrate
+
+seed:
+	docker compose run --rm seed
 
 geoserver:
 	docker compose --profile geoserver up -d geoserver

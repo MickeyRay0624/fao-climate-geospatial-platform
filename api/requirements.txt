@@ -9,3 +9,9 @@ pytest==8.4.2
 httpx==0.28.1
 minio==7.2.16
 python-multipart==0.0.20
+alembic==1.16.5
+celery[redis]==5.5.3
+redis==5.2.1
+PyYAML==6.0.2
+jsonschema==4.25.1
+PyJWT[crypto]==2.10.1

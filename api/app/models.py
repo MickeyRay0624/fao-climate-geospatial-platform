@@ -18,6 +18,8 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from uuid import UUID
 
 
 class Base(DeclarativeBase):
@@ -110,6 +112,9 @@ class AdminArea(Base):
     dataset_version_id: Mapped[int | None] = mapped_column(
         ForeignKey("data_versions.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    catalog_version_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, index=True
+    )
     code: Mapped[str] = mapped_column(String(64), index=True)
     name: Mapped[str] = mapped_column(String(160))
     province: Mapped[str] = mapped_column(String(120), index=True)
@@ -164,6 +169,9 @@ class AnalysisRun(Base):
     dataset_version_id: Mapped[int | None] = mapped_column(
         ForeignKey("data_versions.id", ondelete="RESTRICT"), nullable=True, index=True
     )
+    catalog_version_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True, index=True
+    )
     scenario_key: Mapped[str] = mapped_column(String(64))
     weights: Mapped[dict[str, float]] = mapped_column(JSON)
     min_rice_area_ha: Mapped[float] = mapped_column(Float, default=0)
@@ -199,4 +207,3 @@ class PriorityResult(Base):
 
     run: Mapped[AnalysisRun] = relationship(back_populates="results")
     area: Mapped[AdminArea] = relationship()
-
