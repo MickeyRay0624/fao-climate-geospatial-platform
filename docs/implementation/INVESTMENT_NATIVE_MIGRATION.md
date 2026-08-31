@@ -10,6 +10,17 @@ Investment Prioritisation now uses `investment.*` as its only new-run/result wri
 
 Legacy `public.analysis_runs` and `public.priority_results` are unchanged. Their 13/1,443 records were copied to deterministic native UUIDs and reconciled row by row. Repeating the backfill creates zero additional records.
 
+## GitHub delivery
+
+- Authenticated account: `MickeyRay0624`
+- Private repository: <https://github.com/MickeyRay0624/fao-climate-geospatial-platform>
+- Remote: `github-personal`
+- Foundation/base: `refactor/platform-foundation-data-hub`
+- Feature/head: `feat/investment-native-migration`
+- Draft PR: <https://github.com/MickeyRay0624/fao-climate-geospatial-platform/pull/1>
+
+The local `main`, Foundation and feature branches were pushed without force. The pull request is intentionally stacked on the verified Foundation branch and is not merged.
+
 ## Schema and migration
 
 Revision `20260831_0003_investment_native_domain` creates:
