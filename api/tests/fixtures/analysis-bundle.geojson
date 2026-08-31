@@ -1,0 +1,50 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[104.0, 12.0], [104.2, 12.0], [104.2, 12.2], [104.0, 12.2], [104.0, 12.0]]]
+      },
+      "properties": {
+        "code": "UPLOAD-001",
+        "name": "Uploaded Demo Commune 01",
+        "province": "Upload Test",
+        "population": 12000,
+        "rice_area_ha": 1400,
+        "data_quality": 0.91,
+        "yield_gap": 0.62,
+        "drought_risk": 0.71,
+        "flood_risk": 0.34,
+        "poverty_index": 0.58,
+        "irrigation_gap": 0.66,
+        "market_isolation": 0.44,
+        "nbs_opportunity": 0.73
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[104.22, 12.0], [104.42, 12.0], [104.42, 12.2], [104.22, 12.2], [104.22, 12.0]]]
+      },
+      "properties": {
+        "code": "UPLOAD-002",
+        "name": "Uploaded Demo Commune 02",
+        "province": "Upload Test",
+        "population": 9000,
+        "rice_area_ha": 980,
+        "data_quality": 0.88,
+        "yield_gap": 0.48,
+        "drought_risk": 0.53,
+        "flood_risk": 0.67,
+        "poverty_index": 0.63,
+        "irrigation_gap": 0.51,
+        "market_isolation": 0.38,
+        "nbs_opportunity": 0.69
+      }
+    }
+  ]
+}
+

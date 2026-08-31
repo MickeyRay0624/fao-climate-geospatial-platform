@@ -1,0 +1,138 @@
+name: cambodia-rice-dss
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    # The official PostGIS image is pinned for reproducibility. On Apple Silicon,
+    # Docker Desktop runs this amd64 image through its normal emulation layer.
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rice_dss}
+      POSTGRES_USER: ${POSTGRES_USER:-rice_dss}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-rice_demo_change_me}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-rice_dss} -d ${POSTGRES_DB:-rice_dss}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dss_local_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-dss_local_storage_change_me}
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  seed:
+    build:
+      context: ./api
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-rice_dss}:${POSTGRES_PASSWORD:-rice_demo_change_me}@db:5432/${POSTGRES_DB:-rice_dss}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-dss_local_admin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-dss_local_storage_change_me}
+      MINIO_BUCKET: ${MINIO_BUCKET:-dss-data}
+    command: ["python", "-m", "app.seed"]
+    volumes:
+      - ./api:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: "no"
+
+  api:
+    build:
+      context: ./api
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-rice_dss}:${POSTGRES_PASSWORD:-rice_demo_change_me}@db:5432/${POSTGRES_DB:-rice_dss}
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-dss_local_admin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-dss_local_storage_change_me}
+      MINIO_BUCKET: ${MINIO_BUCKET:-dss-data}
+      MAX_UPLOAD_BYTES: 26214400
+    command:
+      [
+        "uvicorn",
+        "app.main:app",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--reload",
+      ]
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./api:/app
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+    environment:
+      VITE_API_PROXY_TARGET: http://api:8000
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0", "--port", "3000"]
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ./web:/app
+      - web_node_modules:/app/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  geoserver:
+    image: kartoza/geoserver:3.0.1
+    profiles: ["geoserver"]
+    environment:
+      GEOSERVER_ADMIN_USER: ${GEOSERVER_ADMIN_USER:-admin}
+      GEOSERVER_ADMIN_PASSWORD: ${GEOSERVER_ADMIN_PASSWORD:-geoserver_demo_change_me}
+      INITIAL_MEMORY: 512M
+      MAXIMUM_MEMORY: 1G
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - geoserver_data:/opt/geoserver/data_dir
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgis_data:
+  minio_data:
+  web_node_modules:
+  geoserver_data:
