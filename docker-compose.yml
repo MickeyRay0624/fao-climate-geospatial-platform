@@ -79,6 +79,10 @@ services:
       CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-false}
       ALLOW_INSECURE_DEV_FILE_SCAN: ${ALLOW_INSECURE_DEV_FILE_SCAN:-true}
       MAX_DATA_HUB_UPLOAD_BYTES: ${MAX_DATA_HUB_UPLOAD_BYTES:-104857600}
+      CODE_VERSION_REF: ${CODE_VERSION_REF:-working-tree/local}
+      CONTAINER_IMAGE_TAG: ${CONTAINER_IMAGE_TAG:-cambodia-rice-dss-api:local}
+      CONTAINER_IMAGE_DIGEST: ${CONTAINER_IMAGE_DIGEST:-}
+      BUILD_ID: ${BUILD_ID:-local-compose}
     command: ["alembic", "upgrade", "head"]
     volumes:
       - ./api:/app
@@ -152,6 +156,7 @@ services:
         "worker",
         "--loglevel=INFO",
         "--concurrency=1",
+        "--queues=celery,geospatial-analysis",
         "--hostname=platform-worker@%h",
       ]
     volumes:

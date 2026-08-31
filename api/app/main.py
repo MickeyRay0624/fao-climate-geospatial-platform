@@ -45,6 +45,7 @@ from app.models import (
 from app.object_store import ensure_bucket, get_bytes
 from app.schemas import AnalysisRequest
 from app.datahub.router import router as datahub_router
+from app.investment.router import router as investment_router
 from app.platform_router import (
     audit_router,
     core_router,
@@ -59,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="FAO Climate Geospatial Data & Decision Platform API",
-    version="1.0.0-phase1",
+    version="1.0.0-phase2a",
     description=(
         "Versioned spatial data management and transparent multi-criteria analysis "
         "for a local demonstrator."
@@ -68,6 +69,7 @@ app = FastAPI(
 
 app.include_router(core_router)
 app.include_router(datahub_router)
+app.include_router(investment_router)
 app.include_router(jobs_router)
 app.include_router(audit_router)
 app.include_router(governance_router)
@@ -528,47 +530,12 @@ def run_analysis(
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     assert_permission(principal, "investment.run.create", "investment-prioritisation")
-    scenario = SCENARIOS.get(request.scenario_key)
-    if scenario is None:
-        raise HTTPException(status_code=400, detail="Unknown scenario")
-
-    version = get_version_with_checks(session, request.dataset_version_id)
-    if version.status != "published":
-        raise HTTPException(
-            status_code=409, detail="Only a published dataset version can be analysed"
-        )
-    records = load_area_records(session, version.id)
-    if not records:
-        raise HTTPException(status_code=409, detail="Dataset version has no analysis records")
-
-    weights = normalise_weights(request.weights or scenario["weights"])
-    records = calculate_priorities(records, weights, request.min_rice_area_ha)
-    run = AnalysisRun(
-        dataset_version_id=version.id,
-        scenario_key=request.scenario_key,
-        weights=weights,
-        min_rice_area_ha=request.min_rice_area_ha,
-        dataset_version=version,
+    raise PlatformError(
+        "LEGACY_ANALYSIS_READ_ONLY",
+        "The legacy synchronous analysis command is read-only after Phase 2A. Create a governed asynchronous native run.",
+        410,
+        {"replacement": "/api/apps/investment-prioritisation/v1/runs"},
     )
-    session.add(run)
-    session.flush()
-
-    for record in records:
-        session.add(
-            PriorityResult(
-                run_id=run.id,
-                area_id=record["id"],
-                score=record["score"],
-                rank=record["rank"],
-                eligible=record["eligible"],
-                priority_band=record["priority_band"],
-                components=record["components"],
-                missing_indicators=record["missing_indicators"],
-            )
-        )
-    session.commit()
-    session.refresh(run)
-    return response_payload(run, records)
 
 
 @app.post("/api/analysis/preview")

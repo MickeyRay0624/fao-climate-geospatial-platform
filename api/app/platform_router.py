@@ -29,6 +29,7 @@ from app.platform_models import (
     Group,
     GroupMembership,
     JobStep,
+    InvestmentAnalysisRun,
     Module,
     ProcessingJob,
     Role,
@@ -304,11 +305,22 @@ def retry_job(
     if job.status != "FAILED" or job.attempt >= job.max_attempts:
         raise conflict("JOB_NOT_RETRYABLE", "The job is not eligible for retry.", status=job.status, attempt=job.attempt)
     upload_id = job.payload_json.get("upload_session_id")
-    if not upload_id:
-        raise conflict("JOB_NOT_RETRYABLE", "The original upload session is unavailable.")
-    version = session.get(CatalogDatasetVersion, job.resource_id)
-    if version:
-        version.state = "PROCESSING"
+    run_id = job.payload_json.get("run_id")
+    if job.job_type == "investment:run-prioritisation:v1":
+        run = session.get(InvestmentAnalysisRun, job.resource_id)
+        if run is None or not run_id or str(run.id) != str(run_id):
+            raise conflict("JOB_NOT_RETRYABLE", "The original analysis run is unavailable.")
+        run.status = "queued"
+        run.progress = 0
+        run.current_step = "queued"
+        run.failure_json = {}
+        run.completed_at = None
+    else:
+        if not upload_id:
+            raise conflict("JOB_NOT_RETRYABLE", "The original upload session is unavailable.")
+        version = session.get(CatalogDatasetVersion, job.resource_id)
+        if version:
+            version.state = "PROCESSING"
     job.status = "QUEUED"
     job.progress = 0
     job.error_code = None
@@ -332,7 +344,12 @@ def retry_job(
         after={"attempt": job.attempt + 1},
     )
     session.commit()
-    process_upload_session.delay(upload_id, str(job.id), request.state.correlation_id)
+    if job.job_type == "investment:run-prioritisation:v1":
+        from app.investment.tasks import run_prioritisation
+
+        run_prioritisation.delay(str(job.resource_id), str(job.id))
+    else:
+        process_upload_session.delay(upload_id, str(job.id), request.state.correlation_id)
     return job_payload(session, job)
 
 
