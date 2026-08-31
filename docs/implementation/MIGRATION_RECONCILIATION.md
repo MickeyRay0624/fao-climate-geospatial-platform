@@ -15,7 +15,7 @@ The baseline was captured before schema migration. The PostgreSQL custom-format 
 | new catalog datasets | 0 | 9 | PASS | 1 deterministic legacy backfill, 2 active successful E2E resources, and 6 archived regression resources. |
 | new catalog versions | 0 | 8 | PASS | 3 published, 1 historical deprecated artifact, and 4 archived versions. |
 | registered new catalog assets | 0 | 7 | PASS | Unchanged legacy source reference plus six successful regression assets. |
-| MinIO objects | 1 | 8 | PASS | Original retained; six catalog regression copies and one failed/quarantine object retained. No object was deleted. |
+| MinIO objects | 1 | 8 | PASS | Original retained; six catalog regression copies and one failed/quarantine object retained. No baseline or registered catalog object was deleted; successful transient quarantine objects were removed after promotion. |
 | admin areas | 111 | 111 | PASS | Geometry and indicator read model unchanged. |
 | indicator rows | 777 | 777 | PASS | Seven indicators × 111 areas. |
 | analysis runs | 13 | 13 | PASS | UI preview no longer persists a run. |
