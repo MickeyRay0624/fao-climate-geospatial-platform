@@ -28,21 +28,22 @@ function RankingPanel({ catalog, analysis, selected, onSelect }: Props) {
         .sort(([, left], [, right]) => right.contribution - left.contribution)
         .slice(0, 3)
     : [];
+  const persisted = analysis.persisted ?? analysis.run_id > 0;
 
   return (
     <section id="analysis-results" className="page-section results-section">
       <div className="section-title-row">
         <div>
-          <p className="section-kicker">Saved analysis output · Run #{analysis.run_id}</p>
+          <p className="section-kicker">{persisted ? `Saved analysis output · Run #${analysis.run_id}` : "Unsaved analysis preview"}</p>
           <h2>Priority results and decision trace</h2>
           <p className="muted compact">
             Based on {analysis.dataset_version.dataset_name} · {analysis.dataset_version.version_label} · checksum {analysis.dataset_version.checksum_sha256.slice(0, 10)}
           </p>
         </div>
-        <div className="export-actions large">
+        {persisted ? <div className="export-actions large">
           <a href={exportUrl(analysis.run_id, "csv")}>Export CSV</a>
           <a href={exportUrl(analysis.run_id, "geojson")}>Export GeoJSON</a>
-        </div>
+        </div> : <span className="preview-result-note">Run prioritisation to save and export this result.</span>}
       </div>
 
       <div className="result-summary-grid">
@@ -127,4 +128,3 @@ function RankingPanel({ catalog, analysis, selected, onSelect }: Props) {
 }
 
 export default RankingPanel;
-

@@ -83,6 +83,7 @@ export type AnalysisSummary = {
 
 export type AnalysisResponse = {
   run_id: number;
+  persisted?: boolean;
   dataset_version: AnalysisDatasetVersionReference;
   scenario_key: string;
   weights: Record<string, number>;
