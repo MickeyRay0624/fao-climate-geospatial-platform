@@ -1,0 +1,282 @@
+contract_version: "1.0"
+
+module:
+  key: investment-prioritisation
+  name: Investment & Extension Prioritisation
+  version: 1.0.0
+  status: beta
+  description: Versioned spatial prioritisation for climate-resilient investment and extension targeting.
+
+ownership:
+  product_owner: fao-climate-change-group
+  technical_owner: climate-platform-engineering
+  data_owner_groups:
+    - climate-data-stewards
+  method_owner_groups:
+    - investment-method-board
+  support_contact: climate-platform-support
+
+routes:
+  - path: /apps/investment-prioritisation/overview
+    title: Overview
+    permissions: [apps.investment.use]
+    layout: desktop
+    offline_capable: false
+    navigation: primary
+  - path: /apps/investment-prioritisation/new-run
+    title: New analysis run
+    permissions: [apps.investment.use, investment.run.create]
+    layout: desktop
+    offline_capable: false
+    navigation: primary
+  - path: /apps/investment-prioritisation/input-sets
+    title: Input sets
+    permissions: [apps.investment.use, investment.input_set.create]
+    layout: desktop
+    offline_capable: false
+    navigation: secondary
+  - path: /apps/investment-prioritisation/runs
+    title: Run history
+    permissions: [apps.investment.use, investment.run.view]
+    layout: desktop
+    offline_capable: false
+    navigation: primary
+  - path: /apps/investment-prioritisation/runs/:runId
+    title: Analysis run
+    permissions: [apps.investment.use, investment.run.view]
+    layout: desktop
+    offline_capable: false
+    navigation: hidden
+  - path: /apps/investment-prioritisation/compare
+    title: Compare runs
+    permissions: [apps.investment.use, investment.run.compare]
+    layout: desktop
+    offline_capable: false
+    navigation: primary
+  - path: /apps/investment-prioritisation/methods
+    title: Methods and scenarios
+    permissions: [apps.investment.use, investment.method.edit]
+    layout: desktop
+    offline_capable: false
+    navigation: secondary
+
+api:
+  base_path: /api/apps/investment-prioritisation/v1
+  version: v1
+  openapi_tag: Investment Prioritisation
+  idempotency_required_for_mutations: true
+  error_namespace: INVESTMENT
+
+permissions:
+  required_to_enter:
+    - apps.investment.use
+  declared:
+    - code: apps.investment.use
+      description: Enter and read the investment prioritisation application.
+    - code: investment.input_set.create
+      description: Create an analysis input set from authorised dataset versions.
+    - code: investment.input_set.lock
+      description: Lock an immutable analysis input set.
+    - code: investment.run.create
+      description: Create an analysis run.
+    - code: investment.run.view
+      description: View authorised analysis runs and results.
+    - code: investment.run.cancel
+      description: Cancel an owned queued or running analysis.
+    - code: investment.run.export
+      description: Export authorised run results.
+    - code: investment.run.compare
+      description: Compare existing runs without creating new runs.
+    - code: investment.method.edit
+      description: Edit a draft method version.
+    - code: investment.method.approve
+      description: Approve a method version.
+    - code: investment.scenario.edit
+      description: Edit a draft scenario.
+    - code: investment.scenario.approve
+      description: Approve a scenario.
+    - code: investment.result.submit_review
+      description: Submit a derived result dataset to the Data Hub review workflow.
+
+data:
+  inputs:
+    - role: administrative_boundary
+      profile: administrative-boundary
+      version: "1.0"
+      required: true
+      selection_mode: exact_version
+      allowed_states: [published]
+      multiple: false
+      quality_profile: administrative-boundary@1.0
+      notes: Must provide stable area code, name, administrative level and valid geometry.
+    - role: indicator_layers
+      profile: normalised-indicator-layer
+      version: "1.0"
+      required: true
+      selection_mode: exact_version
+      allowed_states: [published]
+      multiple: true
+      quality_profile: normalised-indicator-layer@1.0
+      notes: Each indicator declares direction, unit, time coverage and aggregation key.
+    - role: legacy_priority_bundle
+      profile: analysis-ready-priority-bundle
+      version: "1.0"
+      required: false
+      selection_mode: exact_version
+      allowed_states: [validated, published]
+      multiple: false
+      quality_profile: legacy-priority-bundle@1.0
+      notes: Temporary compatibility profile for the existing synthetic MVP during migration.
+  outputs:
+    - role: priority_result
+      profile: priority-ranking
+      version: "1.0"
+      register_in_catalog: true
+      lineage_required: true
+      default_visibility: workspace
+      default_classification: fao_internal
+      review_required: true
+      representations: [postgis_table, geoparquet, geojson_download, csv_download]
+      retention_policy: retain-while-referenced
+      notes: Includes area code, score, rank, eligibility, band, contributions and run metadata.
+    - role: analysis_report
+      profile: analysis-report
+      version: "1.0"
+      register_in_catalog: false
+      lineage_required: true
+      default_visibility: restricted
+      default_classification: fao_internal
+      review_required: false
+      representations: [pdf_report]
+      retention_policy: workspace-analysis-default
+      notes: Report is attached to the run or result dataset after review.
+
+persistence:
+  database_schema: investment
+  cross_schema_writes: false
+  object_prefixes:
+    - exports/{workspace_id}/{job_id}/
+  migrations:
+    tool: alembic
+    ownership: module
+
+jobs:
+  - type: investment:run-prioritisation:v1
+    queue: geospatial-analysis
+    idempotent: true
+    max_attempts: 2
+    cancellable: true
+    visible_steps: [validate-inputs, prepare, score, materialise-results, register-output]
+  - type: investment:export-run:v1
+    queue: exports
+    idempotent: true
+    max_attempts: 3
+    cancellable: true
+    visible_steps: [authorise, render, store, sign-download]
+
+events:
+  emits:
+    - investment.analysis.completed.v1
+    - investment.analysis.failed.v1
+    - investment.result.submitted.v1
+  consumes:
+    - catalog.dataset_version.published.v1
+    - catalog.dataset_version.deprecated.v1
+
+audit:
+  - investment.analysis.create
+  - investment.analysis.cancel
+  - investment.analysis.export
+  - investment.input_set.lock
+  - investment.method.approve
+  - investment.scenario.approve
+  - investment.result.submit
+
+security:
+  maximum_classification: restricted
+  contains_personal_data: false
+  contains_precise_location: false
+  row_level_rules:
+    - User must be an active workspace member.
+    - User must be authorised for every selected input dataset version.
+    - Run visibility cannot exceed the most restrictive input classification without an approved derivation policy.
+  download_policy: Authorised export job with short-lived signed URL and audit event.
+  retention_policy: Runs and outputs are retained while referenced; failed transient artifacts follow workspace policy.
+  consent_required: false
+  encryption_at_rest_required: true
+  safe_log_fields: [run_id, workspace_id, method_version_id, status, correlation_id]
+  break_glass_required_for_support: true
+
+i18n:
+  supported_locales: [en]
+  fallback_locale: en
+  versioned_content: true
+
+offline:
+  supported: false
+  cached_resource_types: []
+  mutation_idempotency: idempotency_key
+  conflict_policy: not_applicable
+  device_revoke_clears_cache: true
+
+feature_flags:
+  - key: investment.legacy_bundle_input
+    default: true
+    description: Accept the existing analysis-ready bundle during migration.
+  - key: investment.sensitivity_analysis
+    default: false
+    description: Enable formal sensitivity analysis when methodology is approved.
+  - key: investment.public_result_publish
+    default: false
+    description: Allow a separate publication review path for public outputs.
+
+dependencies:
+  - type: platform_service
+    key: catalog
+    version_constraint: ">=1.0"
+    required: true
+  - type: platform_service
+    key: jobs
+    version_constraint: ">=1.0"
+    required: true
+  - type: platform_service
+    key: audit
+    version_constraint: ">=1.0"
+    required: true
+  - type: data_profile
+    key: administrative-boundary
+    version_constraint: "^1.0"
+    required: true
+  - type: data_profile
+    key: priority-ranking
+    version_constraint: "^1.0"
+    required: true
+
+observability:
+  metrics:
+    - investment_runs_total
+    - investment_run_duration_seconds
+    - investment_run_failures_total
+    - investment_output_registration_failures_total
+  health_checks:
+    - database
+    - job_queue
+    - catalog_api
+    - object_storage
+  structured_logging: true
+  sensitive_fields_redacted: true
+
+testing:
+  contract_tests: true
+  permission_tests: true
+  migration_tests: true
+  e2e_critical_paths:
+    - Create locked input set from published versions and run approved method.
+    - Register result dataset with complete lineage.
+    - Deny run when one input version is not authorised.
+    - Reproduce the legacy synthetic MVP result within agreed numerical tolerance.
+
+compatibility:
+  minimum_platform_version: 1.0.0
+  breaking_change_policy: major_version_required
+  retirement_policy: Preserve historical runs and exports in read-only mode until an approved migration or retention decision is completed.

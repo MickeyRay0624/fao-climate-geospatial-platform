@@ -1,0 +1,50 @@
+erDiagram
+    ORGANIZATION ||--o{ WORKSPACE : contains
+    USER ||--o{ WORKSPACE_MEMBERSHIP : has
+    WORKSPACE ||--o{ WORKSPACE_MEMBERSHIP : admits
+    WORKSPACE ||--o{ GROUP : contains
+    USER ||--o{ GROUP_MEMBERSHIP : joins
+    GROUP ||--o{ GROUP_MEMBERSHIP : includes
+    USER ||--o{ ROLE_ASSIGNMENT : receives
+    GROUP ||--o{ ROLE_ASSIGNMENT : receives
+    WORKSPACE ||--o{ ROLE_ASSIGNMENT : scopes
+
+    WORKSPACE ||--o{ DATASET : owns
+    DATASET ||--o{ DATASET_VERSION : versions
+    DATASET_VERSION ||--o{ ASSET : contains
+    DATASET_VERSION ||--o{ REPRESENTATION : exposes
+    DATASET_VERSION ||--|| METADATA_RECORD : snapshots
+    DATASET_VERSION ||--o{ QUALITY_RUN : checked_by
+    QUALITY_RUN ||--o{ QUALITY_ISSUE : reports
+    DATASET_VERSION ||--o{ REVIEW_REQUEST : reviewed_through
+    REVIEW_REQUEST ||--o{ REVIEW_DECISION : receives
+    COLLECTION ||--o{ COLLECTION_MEMBER : contains
+    DATASET_VERSION ||--o{ COLLECTION_MEMBER : selected_as
+
+    LINEAGE_PROCESS ||--o{ LINEAGE_EDGE : links
+    DATASET_VERSION ||--o{ LINEAGE_EDGE : participates
+
+    WORKSPACE ||--o{ INPUT_SET : owns
+    INPUT_SET ||--o{ INPUT_MEMBER : contains
+    DATASET_VERSION ||--o{ INPUT_MEMBER : selected_as
+    METHOD_DEFINITION ||--o{ METHOD_VERSION : versions
+    METHOD_VERSION ||--o{ SCENARIO : supports
+    METHOD_VERSION ||--o{ ANALYSIS_RUN : executes
+    INPUT_SET ||--o{ ANALYSIS_RUN : feeds
+    ANALYSIS_RUN ||--o{ PRIORITY_RESULT : produces
+    ANALYSIS_RUN ||--o| DATASET_VERSION : registers_output
+
+    WORKSPACE ||--o{ EXTENSION_CASE : contains
+    EXTENSION_CASE ||--o{ CASE_ASSIGNMENT : assigned
+    EXTENSION_CASE ||--o{ OBSERVATION : records
+    OBSERVATION ||--o{ MEDIA_ASSET : attaches
+    EXTENSION_CASE ||--o{ DIAGNOSIS_RUN : evaluates
+    DIAGNOSIS_RUN ||--o{ DIAGNOSIS_CANDIDATE : ranks
+    KNOWLEDGE_ITEM ||--o{ KNOWLEDGE_VERSION : versions
+    KNOWLEDGE_VERSION ||--o{ KNOWLEDGE_SOURCE : cites
+    KNOWLEDGE_VERSION ||--o{ DIAGNOSIS_CANDIDATE : supports
+    EXTENSION_CASE ||--o{ VERIFICATION_SESSION : verifies
+    VERIFICATION_SESSION ||--o{ VERIFICATION_RESPONSE : collects
+    EXTENSION_CASE ||--o{ ACTIVITY_PLAN : plans
+    ACTIVITY_PLAN ||--o{ ACTIVITY_STEP : contains
+    EXTENSION_CASE ||--o{ FOLLOW_UP : schedules

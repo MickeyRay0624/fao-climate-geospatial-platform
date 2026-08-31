@@ -1,58 +1,41 @@
-# Cambodia Climate-Resilient Rice Prioritisation MVP
+# FAO Climate Geospatial Data & Decision Platform
 
-A local, transparent spatial decision-support demonstrator for the question:
+This repository is the first runnable platform increment: a shared application shell, governed geospatial Data Hub, and the existing Cambodia rice-resilience DSS preserved as the first application module.
 
-> Which Cambodian communes should be prioritised for climate-resilient rice investment or extension support?
+The current Cambodia data are **synthetic demonstration data** for 111 illustrative communes. They are not official boundaries, observations, operational advice, a field-scale digital twin, or an endorsed FAO methodology.
 
-The current dataset is deliberately synthetic. The system demonstrates a complete workflow and technical architecture; it does **not** produce operational advice.
+## Implemented in this increment
 
-## What the demonstrator does
+- Responsive React application shell with capability-driven navigation, development-persona switcher, jobs, reviews, governance, audit, and help views.
+- OIDC-ready identity boundary plus an explicitly labelled local development provider.
+- Organizations, workspaces, memberships, groups, roles, permissions, resource grants, module registry, and workspace module enablement.
+- Backend RBAC/ABAC authorization with ownership, review assignment, visibility/classification rules, and explicit `DENY` precedence.
+- Versioned Data Hub APIs and the governed lifecycle from private draft through direct upload, background validation, review, immutable publication, sharing, preview/download, lineage, deprecation, and archive.
+- Validation profiles for the legacy analysis bundle, generic GeoJSON, CSV tables, and basic documents.
+- Celery/Redis jobs with durable PostgreSQL state, progress steps, retry rules, idempotency, and audit events.
+- Alembic schemas for `iam`, `core`, `governance`, `catalog`, `jobs`, `audit`, `integration`, and the future `investment` domain.
+- Strangler backfill of the existing catalog into the new authoritative `catalog.*` model without moving or modifying the original MinIO object.
+- Legacy Investment & Extension Prioritisation workflow, map, ranking, explanations, quality evidence, CSV export, and GeoJSON export under the new shell.
 
-- provides one document-level page scroll instead of separately scrolling left,
-  map, and results columns;
-- maintains a team data catalogue with named datasets and immutable version labels;
-- stores every uploaded source file and records its SHA-256 checksum;
-- checks schema, row completeness, commune-code uniqueness, polygon validity,
-  numeric fields, 0–1 indicator ranges, missing values, and Cambodia extent;
-- separates upload, validation, publication, and analysis so drafts cannot silently
-  enter a ranking;
-- makes the user select one published data version for every analysis run and records
-  that lineage in the result and exports;
-- displays synthetic commune geometries in an interactive map;
-- combines seven decision indicators through visible, adjustable weights;
-- provides four policy presets: balanced resilience, productivity, climate resilience, and equity;
-- applies a minimum rice-area eligibility rule;
-- generates a priority score, band, and ranked commune worklist;
-- explains each score through factor-level contributions;
-- flags missing data and shows data completeness;
-- compares the results of all four policy presets; and
-- exports complete results as CSV or GeoJSON.
+Not implemented: production FAO SSO connection, an approved production malware scanner, cloud/public deployment, raster/COG/STAC processing, the Extension Officer Field Support workflow, LLM or agronomic advice, or full migration of investment analysis history into the new domain.
 
 ## Local architecture
 
 ```text
-Browser
-  │
-  ▼
-React + TypeScript + Vite + OpenLayers + ECharts
-  │  /api proxy
-  ▼
-FastAPI + transparent multi-criteria analysis
-  ├──────────────► PostgreSQL + PostGIS
-  │                 catalogue metadata, versions, quality checks,
-  │                 commune geometry/indicators, analysis runs and results
-  │
-  └──────────────► MinIO object storage
-                    original uploaded GeoJSON/CSV files
+Browser (React + TypeScript)
+  ├─ /api ──────► FastAPI modular monolith
+  │                ├─ PostgreSQL/PostGIS: authoritative metadata and read models
+  │                ├─ MinIO: immutable source assets and quarantine objects
+  │                └─ Redis ─► Celery worker: validation jobs
+  └─ signed PUT/GET ─► MinIO (short-lived URLs; no permanent browser credentials)
 
-Deterministic synthetic-data seed ──► version 1.0.0 in both stores
-
-Optional: GeoServer ───────────────► PostGIS
+Optional GeoServer ─────────► PostGIS publication layer
 ```
 
-The web application uses FastAPI GeoJSON directly for the core demonstration. GeoServer is an optional publication layer and is not a dependency of the scoring workflow.
+The new catalog is authoritative for all new dataset metadata. The legacy `admin_areas`, `indicator_values`, `analysis_runs`, and `priority_results` remain the investment module's read model during the strangler migration.
+The legacy investment catalogue URLs remain as read adapters over the authoritative catalog and deterministic backfill mappings. Their former upload/publish mutations return `410 LEGACY_CATALOG_READ_ONLY`, preventing dual writes while preserving the existing UI contract.
 
-## Run it locally
+## Start locally
 
 Requirements: Docker Desktop with Docker Compose.
 
@@ -60,137 +43,91 @@ Requirements: Docker Desktop with Docker Compose.
 cd "/Users/lei/Documents/联合国工作/数字孪生/cambodia-rice-dss"
 cp .env.example .env
 docker compose up --build -d
+docker compose ps -a
 ```
+
+Compose waits for PostgreSQL, runs `alembic upgrade head`, executes the idempotent seed, and then starts the API, worker, and web application. Re-running the command is safe.
 
 Open:
 
-- Web demonstrator: <http://localhost:3000>
-- API documentation: <http://localhost:8000/docs>
-- MinIO object-storage console: <http://localhost:9001>
-- PostGIS: `127.0.0.1:5432`
+- Platform: <http://localhost:3000/home>
+- Data Hub: <http://localhost:3000/data/catalog>
+- Investment module: <http://localhost:3000/apps/investment-prioritisation/overview>
+- OpenAPI: <http://localhost:8000/docs>
+- Health: <http://localhost:8000/health>
+- MinIO console: <http://localhost:9001>
 
-The default values in `.env.example` are only local demonstration credentials. Change them before using the stack on any shared host. MinIO is running locally in Docker: open source does not mean that a third party is providing free cloud storage.
-
-## Data workflow
-
-The page follows one controlled path:
-
-```text
-upload source → automatic quality checks → validated draft → publish
-              → select published version → analyse → export result
-```
-
-Use **Upload data version** in the data catalogue. A new upload can create a new
-dataset or add a version to an existing dataset. The raw source is preserved even
-when validation fails, but a failed draft cannot be published or analysed.
-
-Supported MVP inputs:
-
-- GeoJSON/JSON `FeatureCollection` with Polygon or MultiPolygon geometry; or
-- CSV with an EPSG:4326 polygon in a `geometry_wkt` column.
-
-Every row/feature must contain `code`, `name`, `province`, `rice_area_ha`, and the
-seven indicator fields listed below. `population` and `data_quality` are optional.
-Indicator values must be numeric from 0 to 1; empty indicator values are accepted
-with a visible warning and the documented missing-value policy. The local upload
-limit is 25 MB.
-
-Publishing makes a version analysis-ready and marks it as the current version of
-its dataset. Existing published versions remain available for reproducibility.
-Changing the selected version does not silently replace the current map: the page
-marks the configuration as pending until **Run analysis** is selected.
-
-Stop the services:
+Stop containers without deleting data:
 
 ```bash
 docker compose down
 ```
 
-Delete the local database volume and regenerate the synthetic dataset:
+> **Data-preservation warning:** never run `docker compose down -v` for this project. It deletes the PostgreSQL, MinIO, and Redis volumes. Follow [BACKUP_AND_RESTORE.md](docs/runbooks/BACKUP_AND_RESTORE.md) before any migration or recovery operation.
 
-```bash
-docker compose down -v
-docker compose up --build -d
-```
+## Development identities
 
-## Optional GeoServer
+Development mode is intentionally visible and is not FAO SSO. The seeded personas are:
 
-Start the optional service:
+| Subject | Persona | Role |
+|---|---|---|
+| `dev-admin` | Amina Sok | workspace administrator |
+| `dev-contributor` | Dara Chann | contributor/data owner |
+| `dev-reviewer` | Sophea Lim | reviewer |
+| `dev-publisher` | Nita Vann | publisher |
+| `dev-analyst` | Vichea Pen | spatial analyst |
+| `dev-viewer` | Maly Chea | viewer |
+| `dev-auditor` | Samnang Khem | auditor |
 
-```bash
-docker compose --profile geoserver up -d geoserver
-```
+Use the banner switcher in the UI or send `X-Dev-User-Subject: <subject>` locally. The API refuses development identity headers outside `APP_ENV=development|test`; production/staging configuration fails closed. See [DEV_AUTH_AND_OIDC_BOUNDARY.md](docs/security/DEV_AUTH_AND_OIDC_BOUNDARY.md).
 
-Then open <http://localhost:8080/geoserver>. To add the database as a PostGIS store from inside GeoServer, use:
-
-- host: `db`
-- port: `5432`
-- database: the `POSTGRES_DB` value;
-- schema: `public`; and
-- username/password: the matching values from `.env`.
-
-GeoServer publishes layers; it does not store the source dataset. The source records remain in PostGIS.
-
-## Decision model
-
-All indicators are normalised to 0–1 and oriented so that a higher value means a stronger reason to prioritise support.
+## Data Hub workflow
 
 ```text
-score = Σ(normalised weight × oriented indicator) × quality adjustment
+create dataset → draft version → direct upload to quarantine
+  → background scan/validation → quality evidence → independent review
+  → publisher action → immutable published snapshot → governed access
 ```
 
-The seven synthetic indicators are:
+Supported profiles:
 
-1. yield gap;
-2. drought risk;
-3. flood risk;
-4. poverty and livelihood vulnerability;
-5. irrigation-access gap;
-6. market isolation; and
-7. nature-based-solutions opportunity.
+- `analysis-ready-priority-bundle@1.0`: existing GeoJSON or CSV+WKT investment bundle rules;
+- `generic-vector@1.0`: non-empty GeoJSON `FeatureCollection` with geometry/schema summary;
+- `generic-table@1.0`: parseable CSV with header/row/schema sampling;
+- `document@1.0`: PDF, DOCX, Markdown, and text cataloging without OCR or content exposure.
 
-Missing values receive a neutral value of 0.5, reduce data completeness, and remain visibly flagged. This is a demonstration policy, not an endorsed FAO methodology.
+Direct uploads use short-lived presigned URLs. In local development the scanner is an explicit `development scan bypass`; the health endpoint returns `healthy_with_warnings`. Staging and production cannot enable this bypass.
 
-## Synthetic data
-
-The seed is deterministic, so a reset produces the same records. It creates roughly 110 clipped grid polygons loosely based on Cambodia's geographic extent, assigns demonstration commune/province labels, and generates spatially correlated indicator values. A small number of values are deliberately missing to exercise the quality-warning workflow.
-
-No displayed polygon is an official administrative boundary. No displayed indicator is an official FAO, Cambodian government, satellite, climate, census, or programme output.
-
-## Main API routes
-
-- `GET /health`
-- `GET /api/catalog`
-- `GET /api/data-catalog`
-- `POST /api/data-catalog/upload`
-- `GET /api/data-versions/available`
-- `POST /api/data-versions/{version_id}/publish`
-- `GET /api/data-versions/{version_id}/preview`
-- `GET /api/data-versions/{version_id}/download`
-- `GET /api/areas?dataset_version_id={version_id}`
-- `GET /api/scenarios`
-- `POST /api/analysis/run`
-- `GET /api/analysis/{run_id}`
-- `GET /api/analysis/{run_id}/ranking`
-- `GET /api/analysis/{run_id}/export.csv`
-- `GET /api/analysis/{run_id}/export.geojson`
-
-## Tests
+## Migrations and seed
 
 ```bash
-make test
-npm --prefix web run build
+make migrate
+make seed
 ```
 
-## Replacing synthetic data
+Alembic supports both an existing legacy database and a clean database. The first revision includes non-destructive backfill; destructive downgrade is intentionally blocked and recovery uses the pre-migration backup. Seed operations are idempotent and do not overwrite user-created catalog resources.
 
-Before a real pilot, the team should confirm the primary decision-maker, intervention being prioritised, spatial unit, authoritative datasets, indicator direction, weighting/governance process, and success criteria. A production data pipeline should then:
+## Verification
 
-1. upload an analysis bundle through the data catalogue;
-2. review automatic checks and add domain review/approval checks where needed;
-3. retain source licences, dates, spatial resolution and transformation metadata;
-4. publish only after the geometry, indicators and provenance are accepted;
-5. review weights and missing-data rules with domain and government counterparts; and
-6. validate the resulting ranking against field and programme knowledge.
+```bash
+docker compose run --rm --no-deps api python -m pytest -q
+npm --prefix web test
+npm --prefix web run build
+npm --prefix web audit
+python scripts/e2e_datahub.py
+python scripts/e2e_negative_controls.py
+```
 
-The MVP intentionally excludes authentication, cloud deployment, real-time sensors, Earth-observation ingestion, water-balance models, AI-generated agronomic advice, and integration with Farmerbook or MetKasekor.
+The database-trigger command is documented in [LOCAL_DEVELOPMENT.md](docs/runbooks/LOCAL_DEVELOPMENT.md).
+
+## Documentation
+
+- [Implementation report](docs/implementation/FOUNDATION_DATA_HUB_IMPLEMENTATION.md)
+- [Assumptions and blueprint differences](docs/implementation/FOUNDATION_DATA_HUB_ASSUMPTIONS.md)
+- [Migration reconciliation](docs/implementation/MIGRATION_RECONCILIATION.md)
+- [Local development runbook](docs/runbooks/LOCAL_DEVELOPMENT.md)
+- [Upload/job troubleshooting](docs/runbooks/UPLOAD_AND_JOB_TROUBLESHOOTING.md)
+- [Data access and audit](docs/security/DATA_ACCESS_AND_AUDIT.md)
+- [Architecture decisions](docs/adr/ADR-001-platform-positioning.md)
+
+The unmodified source blueprint is retained at `docs/architecture/blueprint-v0.1/`.

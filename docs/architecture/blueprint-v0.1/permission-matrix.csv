@@ -1,0 +1,65 @@
+﻿domain,permission_code,description,platform_admin,workspace_admin,data_owner,contributor,data_reviewer,data_publisher,analyst,viewer,extension_officer,extension_supervisor,knowledge_editor,knowledge_approver,auditor,conditions
+platform,platform.admin,Manage platform configuration and break-glass operations,ALLOW,,,,,,,,,,,,READ,Technical access does not automatically grant ordinary business-data viewing
+workspace,workspace.view,View workspace metadata,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,Active membership required
+workspace,workspace.manage_settings,Edit workspace settings,BREAK_GLASS,ALLOW,,,,,,,,,,,READ,
+workspace,workspace.manage_members,"Invite, suspend and remove members",BREAK_GLASS,ALLOW,,,,,,,,,,,READ,All changes audited
+workspace,workspace.manage_groups,Manage workspace groups,BREAK_GLASS,ALLOW,,,,,,,,,,,READ,All changes audited
+workspace,workspace.manage_roles,Assign role bundles and temporary grants,BREAK_GLASS,ALLOW,,,,,,,,,,,READ,All changes audited
+workspace,workspace.enable_modules,Enable or disable modules,ALLOW,ALLOW,,,,,,,,,,,READ,Installed module and valid contract required
+data,data.catalog.enter,Enter the Data Hub,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,
+data,dataset.create,Create a logical dataset,,ALLOW,ALLOW,ALLOW,,,,,,,,,,Workspace policy may restrict data kinds
+data,dataset.view_metadata,View dataset and version metadata,SUPPORT_SESSION,WORKSPACE,OWN_OR_GRANTED,OWN_OR_GRANTED,REVIEW_SCOPE,REVIEW_SCOPE,GRANTED,GRANTED,GRANTED,WORKSPACE,GRANTED,GRANTED,AUDIT_SCOPE,"Visibility, classification and grants apply"
+data,dataset.preview,Preview authorised representations,SUPPORT_SESSION,GRANTED,OWN_OR_GRANTED,OWN_OR_GRANTED,REVIEW_SCOPE,REVIEW_SCOPE,GRANTED,GRANTED,GRANTED,GRANTED,,,EVIDENCE,Signed URLs only
+data,dataset.download,Download source or derived assets,SUPPORT_SESSION,GRANTED,OWN_OR_GRANTED,OWN_OR_GRANTED,REVIEW_SCOPE,REVIEW_SCOPE,GRANTED,GRANTED,GRANTED,GRANTED,,,EVIDENCE,Download audited; classification may block
+data,dataset.edit_metadata,Edit draft metadata,,POLICY,OWN,OWN_OR_CONTRIBUTED,COMMENT_ONLY,,,,,,,,,Published metadata snapshot is immutable
+data,dataset.upload_version,Upload a new dataset version,,POLICY,OWN,OWN_OR_GRANTED,,,,,,,,,,Direct multipart upload; quota applies
+data,dataset.submit_review,Submit validated version for review,,POLICY,OWN,OWN_OR_GRANTED,,,,,,,,,,Blocking validation issue requires formal exception
+data,dataset.review,"Perform technical, metadata or domain review",,ASSIGN,,,ASSIGNED,READ,,,,,,,READ,Reviewer cannot be sole approver of own version
+data,dataset.publish,Publish an approved immutable version,BREAK_GLASS,POLICY,,,,ASSIGNED,,,,,,,READ,Approved reviews required
+data,dataset.manage_access,Manage visibility and resource grants,BREAK_GLASS,WORKSPACE,OWN,,,,,,,,,,READ,Classification sets maximum visibility
+data,dataset.deprecate,Deprecate a published version,BREAK_GLASS,POLICY,REQUEST,,RECOMMEND,ALLOW,,,,,,,READ,Historical runs remain reproducible
+data,dataset.archive,Archive a dataset without deleting referenced data,BREAK_GLASS,POLICY,REQUEST,,,ALLOW,,,,,,,READ,Retention and lineage checks required
+data,dataset.delete_unpublished,Delete unreferenced draft or quarantined data,BREAK_GLASS,POLICY,OWN_UNREFERENCED,OWN_UNREFERENCED,,,,,,,,,READ,Never delete referenced or published versions
+data,collection.create,Create a logical collection,,POLICY,ALLOW,ALLOW,,,ALLOW,,,,,,,
+data,collection.manage,Manage a collection,,POLICY,OWN,OWN,,,OWN,,,,,,READ,Formal input collections must contain exact versions
+data,lineage.view,View upstream and downstream lineage,SUPPORT_SESSION,WORKSPACE,GRANTED,GRANTED,ALLOW,ALLOW,ALLOW,ALLOW,GRANTED,WORKSPACE,GRANTED,GRANTED,ALLOW,
+data,quality.manage_profiles,Create and version quality profiles,ALLOW,POLICY,,,ASSIGNED,,,,,,,,READ,Governance approval required
+investment,apps.investment.use,Enter the investment prioritisation module,ALLOW,POLICY,GRANTED,GRANTED,GRANTED,GRANTED,ALLOW,GRANTED,,,,,READ,Module enabled in workspace
+investment,investment.input_set.create,Create analysis input set,,POLICY,ALLOW,ALLOW,,,ALLOW,,,,,,,Selected versions must be authorised
+investment,investment.input_set.lock,Lock an immutable input set,,POLICY,ALLOW,ALLOW,,,ALLOW,,,,,,,Locked members cannot change
+investment,investment.run.create,Create an analysis run,,POLICY,,,,,ALLOW,,,,,,,Approved method required outside sandbox
+investment,investment.run.view,View analysis runs,SUPPORT_SESSION,WORKSPACE,GRANTED,GRANTED,REVIEW_SCOPE,OUTPUT_SCOPE,OWN_OR_GRANTED,GRANTED,,,,,ALLOW,Resource grants apply
+investment,investment.run.cancel,Cancel queued or running analysis,,POLICY,,,,,OWN,,,,,,,Only owner or policy-authorised operator
+investment,investment.run.export,Export analysis results,SUPPORT_SESSION,GRANTED,GRANTED,GRANTED,REVIEW_SCOPE,OUTPUT_SCOPE,OWN_OR_GRANTED,GRANTED,,,,,EVIDENCE,Export job and signed URL; audited
+investment,investment.run.compare,Compare existing runs,,POLICY,GRANTED,GRANTED,GRANTED,GRANTED,ALLOW,GRANTED,,,,,ALLOW,Must not silently create new runs
+investment,investment.method.edit,Edit method draft,,ASSIGNED,,,,,,,,,,,READ,Method-owner group only
+investment,investment.method.approve,Approve method version,,POLICY,,,,,,,,,,,READ,Approver cannot approve own version
+investment,investment.scenario.edit,Edit scenario draft,,POLICY,ASSIGNED,,,,CUSTOM_DRAFT,,,,,,READ,Overrides are saved in run snapshot
+investment,investment.scenario.approve,Approve scenario,,POLICY,,,,,,,,,,,READ,Scenario tied to exact method version
+investment,investment.result.submit_review,Submit derived result dataset for review,,POLICY,,,,,OWN_RUN,,,,,,,Creates Catalog review request
+extension,apps.extension.use,Enter the extension field-support module,ALLOW,POLICY,,,,,,,ALLOW,ALLOW,ALLOW,ALLOW,READ,Module enabled in workspace
+extension,extension.case.create,Create a field case,,POLICY,,,,,,,ALLOW,ALLOW,,,,
+extension,extension.case.view_assigned,View owned or assigned field case,SUPPORT_SESSION,,,,,,,,ASSIGNED_OR_OWN,WORKSPACE,,,EVIDENCE,Precise location may be redacted
+extension,extension.case.view_workspace,View all cases in workspace,SUPPORT_SESSION,,,,,,,,,ALLOW,,,POLICY,
+extension,extension.case.update_assigned,Update owned or assigned case,,POLICY,,,,,,,ASSIGNED_OR_OWN,WORKSPACE,,,,Optimistic locking and state transition rules
+extension,extension.case.assign,Assign or reassign a case,,POLICY,,,,,,,,ALLOW,,,,All changes audited
+extension,extension.case.change_priority,Change case priority,,POLICY,,,,,,,RECOMMEND,ALLOW,,,,Officer may recommend; supervisor confirms
+extension,extension.case.close,Close a field case,,POLICY,,,,,,,REQUEST_OR_POLICY,ALLOW,,,,Closure checklist required
+extension,extension.observation.create,Create observation,,POLICY,,,,,,,ASSIGNED_OR_OWN,WORKSPACE,,,,Offline client UUID for idempotency
+extension,extension.media.upload,Upload field media,,POLICY,,,,,,,ASSIGNED_OR_OWN,WORKSPACE,,,,"Malware scan, consent and EXIF policy"
+extension,extension.media.view_sensitive,View restricted field media,BREAK_GLASS,POLICY,,,,,,,ASSIGNED_OR_OWN,POLICY,,,POLICY_REASON,No permanent URLs; every access audited
+extension,extension.diagnosis.run,Generate ranked candidate causes,,POLICY,,,,,,,ASSIGNED_OR_OWN,WORKSPACE,,,READ,Approved knowledge/rules outside sandbox
+extension,extension.diagnosis.confirm,Confirm or reject candidate diagnosis,,,,,,,,,ASSIGNED_OR_OWN,SUPERVISOR_OVERRIDE,,,READ,Human confirmation required
+extension,extension.verification.complete,Complete field verification,,,,,,,,,ASSIGNED_OR_OWN,WORKSPACE,,,READ,Template version saved
+extension,extension.activity.plan,"Plan FFS, demo or follow-up",,POLICY,,,,,,,OWN_CASE,ALLOW,,,,Approved knowledge citations required
+extension,extension.activity.approve,Approve field activity plan,,POLICY,,,,,,,,ALLOW,,,READ,
+extension,extension.followup.manage,Create and complete follow-ups,,POLICY,,,,,,,OWN_CASE,ALLOW,,,,
+extension,extension.knowledge.edit,Create or edit knowledge draft,,,,,,,,,,,ALLOW,,READ,Draft only
+extension,extension.knowledge.review,Review knowledge version,,POLICY,,,,,,,,EXPERT_FEEDBACK,ASSIGNED,ALLOW,READ,Assigned expert review
+extension,extension.knowledge.approve,Approve knowledge version,,POLICY,,,,,,,,,,ALLOW,READ,Approver cannot approve own version
+extension,extension.aggregate.publish,Publish de-identified or aggregate field data,,POLICY,,,ASSIGNED,,,,,REQUEST,,POLICY,READ,Catalog review and classification policy required
+audit,audit.view,View audit events,ALLOW,WORKSPACE,OWN_RESOURCES,OWN_ACTIONS,REVIEW_SCOPE,PUBLISH_SCOPE,OWN_RUNS,,OWN_CASES,WORKSPACE,OWN_ACTIONS,APPROVAL_SCOPE,ALLOW,Sensitive fields are redacted by scope
+audit,audit.export,Export audit evidence,ALLOW,POLICY,,,,,,,,,,,ALLOW,Export action is itself audited
+jobs,jobs.view_own,View own jobs,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,ALLOW,
+jobs,jobs.view_workspace,View workspace jobs,ALLOW,ALLOW,,,REVIEW_SCOPE,PUBLISH_SCOPE,,,,ALLOW,,,ALLOW,
+jobs,jobs.retry,Retry eligible idempotent jobs,ALLOW,POLICY,OWN,OWN,ASSIGNED,,OWN,,,SUPERVISOR,,,READ,Retry policy and attempt limit apply
