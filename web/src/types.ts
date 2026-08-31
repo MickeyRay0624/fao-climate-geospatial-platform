@@ -40,7 +40,7 @@ export type ScoreComponent = {
 };
 
 export type AreaResult = {
-  id: number;
+  id: string | number;
   code: string;
   name: string;
   province: string;
@@ -59,7 +59,7 @@ export type AreaResult = {
 
 export type GeoFeature = {
   type: "Feature";
-  id: number;
+  id: string | number;
   geometry: {
     type: string;
     coordinates: unknown;
@@ -183,4 +183,124 @@ export type AnalysisDatasetVersionReference = {
 export type UploadResult = {
   dataset: DataCatalogItem;
   uploaded_version_id: number;
+};
+
+export type NativeInputMember = {
+  id: string;
+  dataset_version_id: string;
+  representation_id: string;
+  input_role: string;
+  indicator_code: string | null;
+  object_sha256?: string;
+  ordinal: number;
+};
+
+export type NativeInputSet = {
+  id: string;
+  name: string;
+  label: string;
+  profile_mode: "LEGACY_BUNDLE" | "SEPARATE_LAYERS";
+  status: "DRAFT" | "VALIDATED" | "LOCKED" | "RETIRED";
+  strictest_classification: string;
+  readiness: { ready?: boolean; errors?: Array<{ code: string; message: string }> };
+  warnings: Array<{ code: string; message: string }>;
+  checksum: string | null;
+  row_version: number;
+  members: NativeInputMember[];
+};
+
+export type NativeMethodVersion = {
+  id: string;
+  method_id: string;
+  method_key: string;
+  method_name: string;
+  version_label: string;
+  state: "DRAFT" | "UNDER_REVIEW" | "APPROVED" | "RETIRED";
+  specification: Record<string, unknown>;
+  checksum: string;
+  implementation_key: string;
+  code_ref: string;
+  validation_evidence: Record<string, unknown>;
+  disclaimer: string;
+  row_version: number;
+};
+
+export type NativeMethod = {
+  id: string;
+  method_key: string;
+  name: string;
+  description: string;
+  status: string;
+  row_version: number;
+  versions: NativeMethodVersion[];
+};
+
+export type NativeScenario = {
+  id: string;
+  scenario_key: string;
+  version_label: string;
+  name: string;
+  description: string;
+  method_version_id: string;
+  state: "DRAFT" | "UNDER_REVIEW" | "APPROVED" | "RETIRED";
+  parameters: { weights: Record<string, number>; min_rice_area_ha: number };
+  checksum: string;
+  disclaimer: string;
+  row_version: number;
+};
+
+export type NativeRun = {
+  id: string;
+  input_set: { id: string; label: string };
+  method_version: { id: string; version_label: string };
+  scenario: { id: string; name: string; version_label: string };
+  run_mode: string;
+  status: "queued" | "running" | "succeeded" | "succeeded_with_warnings" | "failed" | "cancel_requested" | "cancelled";
+  progress: number;
+  current_step: string;
+  requested_by: string;
+  processing_job_id: string | null;
+  warnings: Array<{ code: string; message: string }>;
+  failure: { code?: string; message?: string; correlation_id?: string } | null;
+  result_count: number;
+  result_checksum: string | null;
+  output_dataset_version_id: string | null;
+  migration_source: string | null;
+  legacy_run_id: number | null;
+  requested_at: string;
+  completed_at: string | null;
+  parameters_snapshot?: Record<string, unknown>;
+  checksums?: Record<string, string>;
+  execution?: { code_ref: string; worker_task_version: string; container: Record<string, unknown>; correlation_id: string };
+  inputs?: NativeInputMember[];
+};
+
+export type NativeResultResponse = {
+  run_id: string;
+  status: NativeRun["status"];
+  items: AreaResult[];
+  geojson: GeoFeatureCollection;
+  result_checksum: string | null;
+  meta: { page: number; page_size: number; total: number };
+  disclaimer: string;
+};
+
+export type NativeAsset = {
+  id: string;
+  filename: string;
+  role: string;
+  media_type: string;
+  size_bytes: number;
+  sha256: string;
+  url?: string;
+};
+
+export type NativeComparison = {
+  id: string;
+  left_run_id: string;
+  right_run_id: string;
+  summary: Record<string, number>;
+  differences: Record<string, unknown>;
+  checksum: string;
+  areas?: Array<Record<string, unknown>>;
 };

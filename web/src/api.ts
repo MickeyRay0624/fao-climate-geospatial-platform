@@ -5,6 +5,13 @@ import type {
   DataCatalogResponse,
   DataVersion,
   UploadResult,
+  NativeAsset,
+  NativeComparison,
+  NativeInputSet,
+  NativeMethod,
+  NativeResultResponse,
+  NativeRun,
+  NativeScenario,
 } from "./types";
 import type {
   AuditList,
@@ -280,4 +287,86 @@ export function getGovernanceGroups(): Promise<GovernanceGroups> {
 
 export function getGovernanceRoles(): Promise<GovernanceRoles> {
   return requestJson("/api/governance/v1/roles");
+}
+
+const investmentBase = "/api/apps/investment-prioritisation/v1";
+
+export function getInvestmentOverview(): Promise<Record<string, unknown>> {
+  return requestJson(`${investmentBase}/overview`);
+}
+
+export function getInvestmentDataProfiles(): Promise<{ indicators: Array<{ code: string; title: string; unit: string; direction: string }>; profiles: Array<Record<string, unknown>> }> {
+  return requestJson(`${investmentBase}/data-profiles`);
+}
+
+export function getInvestmentInputSets(): Promise<{ items: NativeInputSet[]; meta: Record<string, number> }> {
+  return requestJson(`${investmentBase}/input-sets?page_size=100`);
+}
+
+export function getInvestmentInputSet(id: string): Promise<NativeInputSet> {
+  return requestJson(`${investmentBase}/input-sets/${id}`);
+}
+
+export function createInvestmentInputSet(payload: Record<string, unknown>): Promise<NativeInputSet> {
+  return requestJson(`${investmentBase}/input-sets`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function validateInvestmentInputSet(id: string): Promise<{ input_set: NativeInputSet }> {
+  return requestJson(`${investmentBase}/input-sets/${id}/validate`, { method: "POST", body: "{}" });
+}
+
+export function lockInvestmentInputSet(item: NativeInputSet): Promise<NativeInputSet> {
+  return requestJson(`${investmentBase}/input-sets/${item.id}/lock`, {
+    method: "POST",
+    body: JSON.stringify({ reason: "Lock exact versions for a reproducible formal run", row_version: item.row_version }),
+  });
+}
+
+export function getInvestmentMethods(): Promise<{ items: NativeMethod[]; meta: Record<string, number> }> {
+  return requestJson(`${investmentBase}/methods?page_size=100`);
+}
+
+export function getInvestmentScenarios(): Promise<{ items: NativeScenario[]; meta: Record<string, number> }> {
+  return requestJson(`${investmentBase}/scenarios?page_size=100`);
+}
+
+export function getInvestmentRuns(): Promise<{ items: NativeRun[]; meta: Record<string, number> }> {
+  return requestJson(`${investmentBase}/runs?page_size=100`);
+}
+
+export function getInvestmentRun(id: string): Promise<NativeRun> {
+  return requestJson(`${investmentBase}/runs/${id}`);
+}
+
+export function createInvestmentRun(payload: Record<string, unknown>): Promise<NativeRun> {
+  return requestJson(`${investmentBase}/runs`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function cancelInvestmentRun(id: string): Promise<NativeRun> {
+  return requestJson(`${investmentBase}/runs/${id}/cancel`, {
+    method: "POST", body: JSON.stringify({ reason: "Cancelled by the run owner" }),
+  });
+}
+
+export function getInvestmentResults(id: string): Promise<NativeResultResponse> {
+  return requestJson(`${investmentBase}/runs/${id}/results?page_size=500`);
+}
+
+export function getInvestmentAssets(id: string): Promise<{ items: NativeAsset[] }> {
+  return requestJson(`${investmentBase}/runs/${id}/assets`);
+}
+
+export function getInvestmentLineage(id: string): Promise<Record<string, unknown>> {
+  return requestJson(`${investmentBase}/runs/${id}/lineage`);
+}
+
+export function getInvestmentAudit(id: string): Promise<{ items: Array<Record<string, unknown>> }> {
+  return requestJson(`${investmentBase}/runs/${id}/audit`);
+}
+
+export function createInvestmentComparison(leftRunId: string, rightRunId: string): Promise<NativeComparison> {
+  return requestJson(`${investmentBase}/comparisons`, {
+    method: "POST",
+    body: JSON.stringify({ left_run_id: leftRunId, right_run_id: rightRunId, top_n: 20 }),
+  });
 }
