@@ -1626,19 +1626,20 @@ def delete_grant(
 def download_version(
     version_id: UUID,
     request: Request,
+    role: str = Query(default="source", pattern="^(source|derived-vector)$"),
     principal: Principal = Depends(get_current_principal),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     dataset, version = _dataset_for_version(session, version_id)
     require_dataset_access(session, principal, dataset, "dataset.download")
-    asset = session.scalar(select(CatalogAsset).where(CatalogAsset.dataset_version_id == version.id, CatalogAsset.role == "source").order_by(CatalogAsset.created_at).limit(1))
+    asset = session.scalar(select(CatalogAsset).where(CatalogAsset.dataset_version_id == version.id, CatalogAsset.role == role).order_by(CatalogAsset.created_at).limit(1))
     if asset is None:
         raise not_found("Download asset")
     expires_at = now() + timedelta(seconds=PRESIGNED_URL_TTL_SECONDS)
     record_event(
         session, action="catalog.asset.download", resource_type="dataset_version", resource_id=version.id,
         outcome="success", correlation_id=correlation_id(request), actor_id=principal.user_id,
-        workspace_id=principal.active_workspace_id, after={"expires_at": expires_at.isoformat(), "asset_id": str(asset.id)},
+        workspace_id=principal.active_workspace_id, after={"expires_at": expires_at.isoformat(), "asset_id": str(asset.id), "role": role},
     )
     session.commit()
     return {"url": presigned_get(asset.object_key), "expires_at": expires_at.isoformat(), "filename": asset.filename, "media_type": asset.media_type}
@@ -1767,6 +1768,21 @@ def preview_version(
                 preview_kind = "table"
         except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
             preview_kind = "stored_sample"
+    if (
+        preview_kind == "stored_sample"
+        and isinstance(preview, dict)
+        and preview.get("type") == "FeatureCollection"
+    ):
+        stored_total = total
+        preview, _ = _vector_page(
+            json.dumps(preview).encode("utf-8"),
+            page=page,
+            page_size=page_size,
+            simplify_tolerance=simplify_tolerance,
+        )
+        total = stored_total
+        preview_kind = "vector"
+        simplified = simplify_tolerance > 0
     visible_total = min(total, 2000) if preview_kind == "vector" else total
     record_event(
         session,

@@ -4,11 +4,16 @@ import csv
 import io
 import json
 import mimetypes
+import re
+import sqlite3
+import tempfile
+import zipfile
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
-from shapely.geometry import shape
+from shapely.geometry import mapping, shape
+from shapely.wkb import loads as load_wkb
 
 from app.ingestion import parse_upload
 
@@ -35,6 +40,9 @@ class ValidationResult:
     crs: str | None = None
     geometry_type: str | None = None
     parsed_bundle: Any | None = None
+    derived_payload: bytes | None = None
+    derived_filename: str | None = None
+    derived_media_type: str | None = None
 
     @property
     def has_blocking(self) -> bool:
@@ -107,7 +115,527 @@ def validate_analysis_bundle(filename: str, payload: bytes) -> ValidationResult:
     )
 
 
+VECTOR_FEATURE_LIMIT = 50_000
+VECTOR_PREVIEW_LIMIT = 2_000
+ZIP_FILE_LIMIT = 64
+ZIP_UNCOMPRESSED_LIMIT = 512 * 1024 * 1024
+ZIP_COMPRESSION_RATIO_LIMIT = 200
+
+
+def _epsg_from_wkt(value: str) -> int | None:
+    authorities = re.findall(
+        r'AUTHORITY\s*\[\s*["\']EPSG["\']\s*,\s*["\'](\d+)["\']\s*\]',
+        value,
+        flags=re.IGNORECASE,
+    )
+    if authorities:
+        return int(authorities[-1])
+    normalised = value.upper().replace("_", " ")
+    if "WGS 84" in normalised or "WGS1984" in normalised or "WGS 1984" in normalised:
+        return 4326
+    return None
+
+
+def _json_scalar(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value).hex()
+    return str(value)
+
+
+def _direct_vector_result(
+    *,
+    filename: str,
+    format_name: str,
+    layer_name: str,
+    source_epsg: int | None,
+    fields: list[dict[str, Any]],
+    features: list[dict[str, Any]],
+    declared_count: int,
+    issues: list[ValidationIssue],
+) -> ValidationResult:
+    safe_source = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(filename).stem).strip("-.") or "source"
+    safe_layer = re.sub(r"[^A-Za-z0-9._-]+", "-", layer_name).strip("-.") or "layer"
+    invalid = 0
+    bounds: list[tuple[float, float, float, float]] = []
+    geometry_types: set[str] = set()
+    valid_features: list[dict[str, Any]] = []
+    for feature in features:
+        raw_geometry = feature.get("geometry")
+        try:
+            geometry = shape(raw_geometry) if raw_geometry else None
+            if geometry is None or geometry.is_empty or not geometry.is_valid:
+                invalid += 1
+                continue
+            geometry_types.add(geometry.geom_type)
+            bounds.append(geometry.bounds)
+            valid_features.append(feature)
+        except Exception:
+            invalid += 1
+    if invalid:
+        issues.append(
+            ValidationIssue(
+                "VECTOR_INVALID_GEOMETRY",
+                "Valid geometry",
+                "BLOCKING",
+                f"{invalid} features have missing or invalid geometry.",
+                invalid,
+            )
+        )
+    if declared_count > VECTOR_FEATURE_LIMIT:
+        issues.append(
+            ValidationIssue(
+                "VECTOR_FEATURE_LIMIT",
+                "Demonstration ingestion feature limit",
+                "BLOCKING",
+                f"The layer has {declared_count} features; this local path is limited to {VECTOR_FEATURE_LIMIT}.",
+                declared_count,
+            )
+        )
+    if source_epsg is None:
+        issues.append(
+            ValidationIssue(
+                "VECTOR_CRS_UNRESOLVED",
+                "Declared coordinate reference system",
+                "BLOCKING",
+                "The source CRS could not be resolved to an EPSG identifier.",
+                1,
+            )
+        )
+    elif source_epsg != 4326:
+        issues.append(
+            ValidationIssue(
+                "VECTOR_PREVIEW_REPROJECTION_REQUIRED",
+                "Explicit preview reprojection",
+                "BLOCKING",
+                f"Source EPSG:{source_epsg} is preserved, but this local preview path only derives EPSG:4326 without silent reprojection.",
+                1,
+                {"source_crs": f"EPSG:{source_epsg}", "target_crs": "EPSG:4326"},
+            )
+        )
+    bbox = None
+    if bounds:
+        bbox = [
+            min(item[0] for item in bounds),
+            min(item[1] for item in bounds),
+            max(item[2] for item in bounds),
+            max(item[3] for item in bounds),
+        ]
+    preview_features = valid_features[:VECTOR_PREVIEW_LIMIT]
+    preview = {"type": "FeatureCollection", "features": preview_features}
+    blocking = any(issue.severity == "BLOCKING" for issue in issues)
+    derived = None
+    if not blocking:
+        derived = json.dumps(
+            {"type": "FeatureCollection", "features": valid_features},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    schema = {
+        "format": format_name,
+        "source_filename": filename,
+        "layer": layer_name,
+        "fields": fields,
+        "record_count": declared_count,
+        "geometry_types": sorted(geometry_types),
+        "source_crs": f"EPSG:{source_epsg}" if source_epsg else None,
+        "preview_crs": "EPSG:4326" if source_epsg == 4326 else None,
+        "preview_feature_count": len(preview_features),
+        "preview_display_cap": VECTOR_PREVIEW_LIMIT,
+        "source_preserved": True,
+        "reprojected": False,
+    }
+    return ValidationResult(
+        "generic-vector@1.0",
+        declared_count,
+        schema,
+        preview,
+        "derived_geojson_preview",
+        issues,
+        bbox=bbox,
+        crs=f"EPSG:{source_epsg}" if source_epsg else None,
+        geometry_type=",".join(sorted(geometry_types)) or None,
+        derived_payload=derived,
+        derived_filename=f"{safe_source}-{safe_layer}.geojson",
+        derived_media_type="application/geo+json",
+    )
+
+
+def validate_shapefile_zip(filename: str, payload: bytes) -> ValidationResult:
+    issues: list[ValidationIssue] = []
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(payload))
+    except (zipfile.BadZipFile, OSError) as error:
+        return ValidationResult(
+            "generic-vector@1.0",
+            0,
+            {"format": "Shapefile ZIP"},
+            None,
+            "derived_geojson_preview",
+            [
+                ValidationIssue(
+                    "SHAPEFILE_ZIP_INVALID",
+                    "Valid ZIP archive",
+                    "BLOCKING",
+                    str(error),
+                    1,
+                )
+            ],
+        )
+    with archive:
+        entries = [entry for entry in archive.infolist() if not entry.is_dir()]
+        if len(entries) > ZIP_FILE_LIMIT:
+            issues.append(
+                ValidationIssue(
+                    "VECTOR_ZIP_FILE_LIMIT",
+                    "Controlled archive file count",
+                    "BLOCKING",
+                    f"Archive contains {len(entries)} files; maximum is {ZIP_FILE_LIMIT}.",
+                    len(entries),
+                )
+            )
+        total_size = sum(entry.file_size for entry in entries)
+        if total_size > ZIP_UNCOMPRESSED_LIMIT:
+            issues.append(
+                ValidationIssue(
+                    "VECTOR_ZIP_UNCOMPRESSED_LIMIT",
+                    "Controlled uncompressed size",
+                    "BLOCKING",
+                    f"Archive expands to {total_size} bytes; maximum is {ZIP_UNCOMPRESSED_LIMIT}.",
+                    total_size,
+                )
+            )
+        unsafe = []
+        bomb_entries = []
+        nested_archives = []
+        by_stem: dict[str, dict[str, zipfile.ZipInfo]] = {}
+        for entry in entries:
+            raw_name = entry.filename
+            path = PurePosixPath(raw_name)
+            if (
+                "\\" in raw_name
+                or path.is_absolute()
+                or ".." in path.parts
+                or any(part in {"", "."} for part in path.parts)
+            ):
+                unsafe.append(raw_name)
+                continue
+            suffix = path.suffix.lower()
+            if suffix in {".zip", ".7z", ".rar", ".tar", ".gz"}:
+                nested_archives.append(raw_name)
+            if entry.file_size and (
+                entry.compress_size == 0
+                or entry.file_size / max(entry.compress_size, 1)
+                > ZIP_COMPRESSION_RATIO_LIMIT
+            ):
+                bomb_entries.append(raw_name)
+            by_stem.setdefault(str(path.with_suffix("")).lower(), {})[suffix] = entry
+        if unsafe:
+            issues.append(
+                ValidationIssue(
+                    "VECTOR_ZIP_UNSAFE_PATH",
+                    "Archive path safety",
+                    "BLOCKING",
+                    "Unsafe absolute, traversal or ambiguous paths were rejected.",
+                    len(unsafe),
+                    {"entries": unsafe[:10]},
+                )
+            )
+        if bomb_entries:
+            issues.append(
+                ValidationIssue(
+                    "VECTOR_ZIP_COMPRESSION_RATIO",
+                    "Compression bomb protection",
+                    "BLOCKING",
+                    "One or more entries exceed the allowed compression ratio.",
+                    len(bomb_entries),
+                    {"entries": bomb_entries[:10]},
+                )
+            )
+        if nested_archives:
+            issues.append(
+                ValidationIssue(
+                    "VECTOR_ZIP_NESTED_ARCHIVE",
+                    "No nested archives",
+                    "BLOCKING",
+                    "Nested archives are not processed.",
+                    len(nested_archives),
+                    {"entries": nested_archives[:10]},
+                )
+            )
+        required = {".shp", ".shx", ".dbf", ".prj"}
+        complete = [stem for stem, values in by_stem.items() if required <= values.keys()]
+        if not complete:
+            candidates = [
+                {
+                    "layer": stem,
+                    "missing": sorted(required - values.keys()),
+                }
+                for stem, values in by_stem.items()
+                if values.keys() & {".shp", ".shx", ".dbf"}
+            ]
+            issues.append(
+                ValidationIssue(
+                    "SHAPEFILE_COMPONENTS_MISSING",
+                    "Complete Shapefile components",
+                    "BLOCKING",
+                    "A single layer must include matching .shp, .shx, .dbf and .prj files.",
+                    max(1, len(candidates)),
+                    {"layers": candidates[:10]},
+                )
+            )
+        if len(complete) > 1:
+            issues.append(
+                ValidationIssue(
+                    "VECTOR_LAYER_SELECTION_REQUIRED",
+                    "Single layer selection",
+                    "BLOCKING",
+                    "The archive contains multiple complete layers; select one in a future layer-selection step.",
+                    len(complete),
+                    {"layers": complete},
+                )
+            )
+        if any(issue.severity == "BLOCKING" for issue in issues) or len(complete) != 1:
+            return ValidationResult(
+                "generic-vector@1.0",
+                0,
+                {
+                    "format": "Shapefile ZIP",
+                    "archive_file_count": len(entries),
+                    "uncompressed_size_bytes": total_size,
+                    "layers": complete,
+                },
+                None,
+                "derived_geojson_preview",
+                issues,
+            )
+        stem = complete[0]
+        values = by_stem[stem]
+        try:
+            import shapefile
+
+            encoding = "utf-8"
+            if ".cpg" in values:
+                encoding = archive.read(values[".cpg"]).decode("ascii", "ignore").strip() or "utf-8"
+            reader = shapefile.Reader(
+                shp=io.BytesIO(archive.read(values[".shp"])),
+                shx=io.BytesIO(archive.read(values[".shx"])),
+                dbf=io.BytesIO(archive.read(values[".dbf"])),
+                encoding=encoding,
+            )
+            count = len(reader)
+            if count > VECTOR_FEATURE_LIMIT:
+                features: list[dict[str, Any]] = []
+            else:
+                features = [
+                    {
+                        "type": "Feature",
+                        "id": str(index + 1),
+                        "properties": {
+                            key: _json_scalar(value)
+                            for key, value in record.record.as_dict().items()
+                        },
+                        "geometry": record.shape.__geo_interface__,
+                    }
+                    for index, record in enumerate(reader.iterShapeRecords())
+                ]
+            fields = [
+                {"name": item[0], "type": item[1], "width": item[2], "decimals": item[3]}
+                for item in reader.fields[1:]
+            ]
+            prj = archive.read(values[".prj"]).decode("utf-8", "ignore")
+            epsg = _epsg_from_wkt(prj)
+            return _direct_vector_result(
+                filename=filename,
+                format_name="Shapefile ZIP",
+                layer_name=PurePosixPath(stem).name,
+                source_epsg=epsg,
+                fields=fields,
+                features=features,
+                declared_count=count,
+                issues=issues,
+            )
+        except Exception as error:
+            issues.append(
+                ValidationIssue(
+                    "SHAPEFILE_NOT_PARSEABLE",
+                    "Parseable Shapefile",
+                    "BLOCKING",
+                    str(error),
+                    1,
+                )
+            )
+            return ValidationResult(
+                "generic-vector@1.0",
+                0,
+                {"format": "Shapefile ZIP", "layer": stem},
+                None,
+                "derived_geojson_preview",
+                issues,
+            )
+
+
+def _gpkg_geometry(value: Any):
+    payload = bytes(value)
+    if len(payload) < 8 or payload[:2] != b"GP":
+        raise ValueError("Invalid GeoPackage geometry header")
+    flags = payload[3]
+    if flags & 0x10:
+        return None
+    envelope_size = {0: 0, 1: 32, 2: 48, 3: 48, 4: 64}.get((flags >> 1) & 0x07)
+    if envelope_size is None:
+        raise ValueError("Unsupported GeoPackage geometry envelope")
+    return load_wkb(payload[8 + envelope_size :])
+
+
+def _quote_sqlite_identifier(value: str) -> str:
+    return '"' + value.replace('"', '""') + '"'
+
+
+def validate_geopackage(filename: str, payload: bytes) -> ValidationResult:
+    issues: list[ValidationIssue] = []
+    if not payload.startswith(b"SQLite format 3\x00"):
+        issues.append(
+            ValidationIssue(
+                "GEOPACKAGE_SIGNATURE_INVALID",
+                "Valid GeoPackage container",
+                "BLOCKING",
+                "The file is not a SQLite/GeoPackage container.",
+                1,
+            )
+        )
+        return ValidationResult(
+            "generic-vector@1.0", 0, {"format": "GeoPackage"}, None,
+            "derived_geojson_preview", issues,
+        )
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".gpkg") as temporary:
+            temporary.write(payload)
+            temporary.flush()
+            connection = sqlite3.connect(f"file:{temporary.name}?mode=ro", uri=True)
+            connection.row_factory = sqlite3.Row
+            try:
+                connection.execute("PRAGMA query_only = ON")
+                connection.execute("PRAGMA trusted_schema = OFF")
+                layers = connection.execute(
+                    """
+                    SELECT c.table_name, c.identifier, g.column_name, g.srs_id
+                    FROM gpkg_contents c
+                    JOIN gpkg_geometry_columns g ON g.table_name = c.table_name
+                    WHERE c.data_type = 'features'
+                    ORDER BY c.table_name
+                    """
+                ).fetchall()
+                if not layers:
+                    issues.append(
+                        ValidationIssue(
+                            "GEOPACKAGE_FEATURE_LAYER_MISSING",
+                            "GeoPackage feature layer",
+                            "BLOCKING",
+                            "No vector feature layer was found.",
+                            1,
+                        )
+                    )
+                if len(layers) > 1:
+                    issues.append(
+                        ValidationIssue(
+                            "VECTOR_LAYER_SELECTION_REQUIRED",
+                            "Single layer selection",
+                            "BLOCKING",
+                            "The GeoPackage contains multiple feature layers; select one in a future layer-selection step.",
+                            len(layers),
+                            {"layers": [row["table_name"] for row in layers]},
+                        )
+                    )
+                if len(layers) != 1:
+                    return ValidationResult(
+                        "generic-vector@1.0",
+                        0,
+                        {"format": "GeoPackage", "layers": [row["table_name"] for row in layers]},
+                        None,
+                        "derived_geojson_preview",
+                        issues,
+                    )
+                layer = layers[0]
+                table_name = layer["table_name"]
+                geometry_column = layer["column_name"]
+                quoted_table = _quote_sqlite_identifier(table_name)
+                columns = connection.execute(f"PRAGMA table_info({quoted_table})").fetchall()
+                fields = [
+                    {"name": row["name"], "type": row["type"], "nullable": not bool(row["notnull"])}
+                    for row in columns
+                    if row["name"] != geometry_column
+                ]
+                primary_key = next((row["name"] for row in columns if row["pk"]), None)
+                count = int(
+                    connection.execute(f"SELECT count(*) FROM {quoted_table}").fetchone()[0]
+                )
+                srs = connection.execute(
+                    "SELECT organization, organization_coordsys_id FROM gpkg_spatial_ref_sys WHERE srs_id = ?",
+                    (layer["srs_id"],),
+                ).fetchone()
+                epsg = (
+                    int(srs["organization_coordsys_id"])
+                    if srs and str(srs["organization"]).upper() == "EPSG"
+                    else None
+                )
+                features: list[dict[str, Any]] = []
+                if count <= VECTOR_FEATURE_LIMIT:
+                    selected_columns = ", ".join(
+                        _quote_sqlite_identifier(row["name"]) for row in columns
+                    )
+                    rows = connection.execute(
+                        f"SELECT {selected_columns} FROM {quoted_table}"
+                    )
+                    for index, row in enumerate(rows):
+                        geometry = _gpkg_geometry(row[geometry_column]) if row[geometry_column] is not None else None
+                        features.append(
+                            {
+                                "type": "Feature",
+                                "id": str(row[primary_key]) if primary_key else str(index + 1),
+                                "properties": {
+                                    key: _json_scalar(row[key])
+                                    for key in row.keys()
+                                    if key != geometry_column
+                                },
+                                "geometry": mapping(geometry) if geometry else None,
+                            }
+                        )
+                return _direct_vector_result(
+                    filename=filename,
+                    format_name="GeoPackage",
+                    layer_name=table_name,
+                    source_epsg=epsg,
+                    fields=fields,
+                    features=features,
+                    declared_count=count,
+                    issues=issues,
+                )
+            finally:
+                connection.close()
+    except (sqlite3.Error, OSError, ValueError) as error:
+        issues.append(
+            ValidationIssue(
+                "GEOPACKAGE_NOT_PARSEABLE",
+                "Parseable GeoPackage",
+                "BLOCKING",
+                str(error),
+                1,
+            )
+        )
+        return ValidationResult(
+            "generic-vector@1.0", 0, {"format": "GeoPackage"}, None,
+            "derived_geojson_preview", issues,
+        )
+
+
 def validate_generic_vector(filename: str, payload: bytes) -> ValidationResult:
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".zip":
+        return validate_shapefile_zip(filename, payload)
+    if suffix == ".gpkg":
+        return validate_geopackage(filename, payload)
     issues: list[ValidationIssue] = []
     try:
         document = json.loads(payload.decode("utf-8-sig"))

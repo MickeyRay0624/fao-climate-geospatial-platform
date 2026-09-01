@@ -357,8 +357,8 @@ export function getVersionLineage(versionId: string): Promise<Record<string, unk
   return requestJson(`/api/data/v1/versions/${versionId}/lineage`);
 }
 
-export function getVersionDownload(versionId: string): Promise<{ url: string; expires_at: string; filename: string }> {
-  return requestJson(`/api/data/v1/versions/${versionId}/download`);
+export function getVersionDownload(versionId: string, role = "source"): Promise<{ url: string; expires_at: string; filename: string }> {
+  return requestJson(`/api/data/v1/versions/${versionId}/download?role=${encodeURIComponent(role)}`);
 }
 
 export function getAuditEvents(params: URLSearchParams = new URLSearchParams()): Promise<AuditList> {
