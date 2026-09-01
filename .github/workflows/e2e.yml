@@ -36,6 +36,8 @@ jobs:
             sleep 5
           done
           exit 1
+      - name: Prepare governed synthetic investment inputs
+        run: docker compose run --rm --no-deps api python -m app.investment.backfill_legacy --verify --materialise-outputs
       - name: Data Hub positive and negative controls
         run: |
           python scripts/e2e_datahub.py

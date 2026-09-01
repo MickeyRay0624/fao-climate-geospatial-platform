@@ -36,6 +36,19 @@ jobs:
           docker compose run --rm seed
           docker compose run --rm migrate alembic current
           docker compose run --rm migrate alembic heads
+      - name: Prepare governed synthetic investment fixtures
+        run: |
+          docker compose run --rm --no-deps api python -m app.investment.backfill_legacy --verify --materialise-outputs
+          docker compose up -d api worker
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/health >/dev/null; then
+              break
+            fi
+            sleep 5
+          done
+          curl -fsS http://localhost:8000/health >/dev/null
+          python scripts/e2e_investment.py
+          python scripts/e2e_investment.py
       - name: Run backend tests
         run: docker compose run --rm --no-deps api python -m pytest -q
       - name: Capture service logs on failure
