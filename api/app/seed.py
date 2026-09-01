@@ -383,6 +383,14 @@ def seed() -> None:
             f"dataset version {version.version_label}; source stored in object storage."
         )
 
+    # Platform seed and legacy backfill run only after the original source
+    # checksum/object metadata have been finalised. The operation is idempotent.
+    from app.platform_seed import seed_platform
+
+    with SessionLocal() as platform_session:
+        seed_platform(platform_session)
+        print("Platform identity, workspace, modules, permissions, and catalog backfill are ready.")
+
 
 if __name__ == "__main__":
     seed()

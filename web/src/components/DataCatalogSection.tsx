@@ -1,12 +1,9 @@
-import { useState } from "react";
-
 import type { DataCatalogResponse } from "../types";
 
 type Props = {
   catalog: DataCatalogResponse;
   activeVersionId: number;
   onUpload: () => void;
-  onPublish: (versionId: number) => Promise<void>;
   onUseVersion: (versionId: number) => void;
 };
 
@@ -26,20 +23,8 @@ function DataCatalogSection({
   catalog,
   activeVersionId,
   onUpload,
-  onPublish,
   onUseVersion,
 }: Props) {
-  const [publishingId, setPublishingId] = useState<number | null>(null);
-
-  const publish = async (versionId: number) => {
-    setPublishingId(versionId);
-    try {
-      await onPublish(versionId);
-    } finally {
-      setPublishingId(null);
-    }
-  };
-
   return (
     <section id="data-catalog" className="page-section data-catalog-section">
       <div className="section-title-row">
@@ -124,11 +109,7 @@ function DataCatalogSection({
                       <td>
                         <div className="row-actions">
                           <a href={version.download_url}>Download</a>
-                          {version.status === "validated" && (
-                            <button type="button" onClick={() => void publish(version.id)} disabled={publishingId === version.id}>
-                              {publishingId === version.id ? "Publishing…" : "Publish"}
-                            </button>
-                          )}
+                          {version.status === "validated" && <a href="/data/catalog">Review in Data Hub</a>}
                           {version.analysis_ready && (
                             <button type="button" className="use-button" onClick={() => onUseVersion(version.id)}>
                               {activeVersionId === version.id ? "Selected" : "Use in analysis"}
@@ -149,4 +130,3 @@ function DataCatalogSection({
 }
 
 export default DataCatalogSection;
-

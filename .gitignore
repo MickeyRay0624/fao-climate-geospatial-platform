@@ -1,5 +1,6 @@
 .DS_Store
 .env
+.env.*.local
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -7,4 +8,11 @@ __pycache__/
 node_modules/
 dist/
 coverage/
-
+backups/
+*.dump
+*.sql.gz
+.idea/
+CODEX_PROMPT_*.md
+CHATGPT_*.md
+PROJECT_HANDOFF_CONTEXT_*.md
+HIH_REAL_DATA_PLATFORM_TEST_REPORT_*.md

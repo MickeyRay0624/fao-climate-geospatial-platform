@@ -5,7 +5,10 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN npm ci
 
-COPY . .
+COPY --chown=node:node . .
+RUN chown -R node:node /app
+
+USER node
 
 EXPOSE 3000
 

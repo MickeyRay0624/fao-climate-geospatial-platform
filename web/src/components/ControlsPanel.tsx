@@ -89,7 +89,7 @@ function ControlsPanel({
             type="range"
             min="0"
             max="3000"
-            step="100"
+            step="50"
             value={minRiceArea}
             onChange={(event) => onMinRiceAreaChange(Number(event.target.value))}
           />
@@ -145,4 +145,3 @@ function ControlsPanel({
 }
 
 export default ControlsPanel;
-

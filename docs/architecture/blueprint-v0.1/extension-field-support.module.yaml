@@ -1,0 +1,337 @@
+contract_version: "1.0"
+
+module:
+  key: extension-field-support
+  name: Extension Officer Field Support
+  version: 0.1.0
+  status: alpha
+  description: Mobile-first case, observation, verification, activity and follow-up workflow for extension officers.
+
+ownership:
+  product_owner: fao-extension-and-climate-joint-team
+  technical_owner: climate-platform-engineering
+  data_owner_groups:
+    - extension-programme-managers
+  content_owner_groups:
+    - agronomic-knowledge-board
+  support_contact: extension-platform-support
+
+routes:
+  - path: /apps/extension-field-support/worklist
+    title: Worklist
+    permissions: [apps.extension.use, extension.case.view_assigned]
+    layout: mobile
+    offline_capable: true
+    navigation: primary
+  - path: /apps/extension-field-support/cases
+    title: Cases
+    permissions: [apps.extension.use, extension.case.view_assigned]
+    layout: adaptive
+    offline_capable: true
+    navigation: primary
+  - path: /apps/extension-field-support/cases/new
+    title: New case
+    permissions: [apps.extension.use, extension.case.create]
+    layout: mobile
+    offline_capable: true
+    navigation: primary
+  - path: /apps/extension-field-support/cases/:caseId
+    title: Case detail
+    permissions: [apps.extension.use, extension.case.view_assigned]
+    layout: adaptive
+    offline_capable: true
+    navigation: hidden
+  - path: /apps/extension-field-support/map
+    title: Field map
+    permissions: [apps.extension.use, extension.case.view_assigned]
+    layout: mobile
+    offline_capable: true
+    navigation: primary
+  - path: /apps/extension-field-support/knowledge
+    title: Approved knowledge
+    permissions: [apps.extension.use]
+    layout: adaptive
+    offline_capable: true
+    navigation: secondary
+  - path: /apps/extension-field-support/supervision
+    title: Supervision
+    permissions: [apps.extension.use, extension.case.view_workspace]
+    layout: desktop
+    offline_capable: false
+    navigation: secondary
+  - path: /apps/extension-field-support/sync
+    title: Offline sync
+    permissions: [apps.extension.use]
+    layout: mobile
+    offline_capable: true
+    navigation: primary
+
+api:
+  base_path: /api/apps/extension-field-support/v1
+  version: v1
+  openapi_tag: Extension Field Support
+  idempotency_required_for_mutations: true
+  error_namespace: EXTENSION
+
+permissions:
+  required_to_enter:
+    - apps.extension.use
+  declared:
+    - code: apps.extension.use
+      description: Enter the extension field-support application.
+    - code: extension.case.create
+      description: Create a field case.
+    - code: extension.case.view_assigned
+      description: View cases owned by or assigned to the officer.
+    - code: extension.case.view_workspace
+      description: View all authorised cases in the workspace.
+    - code: extension.case.update_assigned
+      description: Update an owned or assigned case.
+    - code: extension.case.assign
+      description: Assign or reassign a case.
+    - code: extension.case.change_priority
+      description: Change case priority under supervisor policy.
+    - code: extension.case.close
+      description: Close a case after required checks.
+    - code: extension.observation.create
+      description: Create a versioned field observation.
+    - code: extension.media.upload
+      description: Upload field media under restricted storage controls.
+    - code: extension.media.view_sensitive
+      description: View sensitive case media.
+    - code: extension.diagnosis.run
+      description: Generate ranked candidate causes from approved knowledge and rules.
+    - code: extension.diagnosis.confirm
+      description: Confirm or reject a candidate diagnosis.
+    - code: extension.verification.complete
+      description: Complete a versioned field-verification checklist.
+    - code: extension.activity.plan
+      description: Plan a Farmer Field School, demonstration or follow-up action.
+    - code: extension.activity.approve
+      description: Approve an extension activity plan.
+    - code: extension.followup.manage
+      description: Create and complete follow-up tasks.
+    - code: extension.knowledge.edit
+      description: Edit a draft agronomic knowledge version.
+    - code: extension.knowledge.review
+      description: Review a knowledge version.
+    - code: extension.knowledge.approve
+      description: Approve a knowledge version.
+    - code: extension.aggregate.publish
+      description: Submit an approved de-identified or aggregated field dataset to Data Hub.
+
+data:
+  inputs:
+    - role: approved_knowledge
+      profile: approved-agronomic-knowledge
+      version: "1.0"
+      required: true
+      selection_mode: exact_version
+      allowed_states: [approved, published]
+      multiple: true
+      quality_profile: approved-agronomic-knowledge@1.0
+      notes: Every substantive diagnosis, verification item and recommendation must cite an approved knowledge version.
+    - role: reference_boundary
+      profile: administrative-boundary
+      version: "1.0"
+      required: true
+      selection_mode: exact_version
+      allowed_states: [published]
+      multiple: false
+      quality_profile: administrative-boundary@1.0
+      notes: Used for assignment, aggregation and location display; exact field location remains separately restricted.
+    - role: priority_targeting
+      profile: priority-ranking
+      version: "1.0"
+      required: false
+      selection_mode: exact_version
+      allowed_states: [published]
+      multiple: false
+      quality_profile: priority-ranking@1.0
+      notes: Optional landscape prioritisation input for supervisor work planning; it is not a field diagnosis.
+  outputs:
+    - role: restricted_case_record
+      profile: field-case-record
+      version: "1.0"
+      register_in_catalog: false
+      lineage_required: true
+      default_visibility: restricted
+      default_classification: sensitive_field
+      review_required: false
+      representations: [extension_case_api]
+      retention_policy: extension-case-policy
+      notes: Raw cases, precise locations, notes and media remain in the extension domain and are not ordinary team datasets.
+    - role: approved_case_aggregate
+      profile: extension-case-aggregate
+      version: "1.0"
+      register_in_catalog: true
+      lineage_required: true
+      default_visibility: workspace
+      default_classification: restricted
+      review_required: true
+      representations: [postgis_table, geoparquet, csv_download]
+      retention_policy: programme-monitoring-policy
+      notes: Must be de-identified or aggregated, pass disclosure review and preserve source-case lineage under restricted access.
+
+persistence:
+  database_schema: extension
+  cross_schema_writes: false
+  object_prefixes:
+    - extension/{workspace_id}/cases/{case_id}/media/
+    - exports/{workspace_id}/{job_id}/
+  migrations:
+    tool: alembic
+    ownership: module
+
+jobs:
+  - type: extension:process-media:v1
+    queue: restricted-media
+    idempotent: true
+    max_attempts: 3
+    cancellable: true
+    visible_steps: [upload, malware-scan, strip-exif, generate-preview, register]
+  - type: extension:sync-offline-records:v1
+    queue: extension-sync
+    idempotent: true
+    max_attempts: 5
+    cancellable: false
+    visible_steps: [authorise, deduplicate, validate, merge, acknowledge]
+  - type: extension:generate-candidates:v1
+    queue: extension-reasoning
+    idempotent: true
+    max_attempts: 2
+    cancellable: true
+    visible_steps: [load-observations, retrieve-approved-knowledge, rank-candidates, cite-sources, save-draft]
+  - type: extension:publish-aggregate:v1
+    queue: geospatial-processing
+    idempotent: true
+    max_attempts: 2
+    cancellable: true
+    visible_steps: [select-cases, de-identify, aggregate, disclosure-check, register-dataset]
+
+events:
+  emits:
+    - extension.case.assigned.v1
+    - extension.case.priority_changed.v1
+    - extension.followup.overdue.v1
+    - extension.knowledge.approved.v1
+    - extension.aggregate.submitted.v1
+  consumes:
+    - catalog.dataset_version.published.v1
+    - catalog.dataset_version.deprecated.v1
+    - investment.analysis.completed.v1
+
+audit:
+  - extension.case.create
+  - extension.case.view_sensitive
+  - extension.case.assign
+  - extension.case.close
+  - extension.media.upload
+  - extension.media.view
+  - extension.diagnosis.generate
+  - extension.diagnosis.confirm
+  - extension.verification.complete
+  - extension.activity.approve
+  - extension.knowledge.approve
+  - extension.aggregate.submit
+
+security:
+  maximum_classification: sensitive_field
+  contains_personal_data: true
+  contains_precise_location: true
+  row_level_rules:
+    - Extension officers may access only cases they created or are currently assigned unless a narrower grant applies.
+    - Supervisors may access cases in their authorised workspace and programme scope.
+    - Knowledge editors do not receive case access merely because they edit content.
+    - Precise location and media require separate permission and may be redacted from list views.
+    - Raw case data may not be registered as a normal workspace dataset.
+  download_policy: Raw media download is disabled by default; authorised viewing uses short-lived URLs and is audited.
+  retention_policy: Case, media, consent and aggregate retention follow an approved country and programme policy; legal hold overrides deletion.
+  consent_required: true
+  encryption_at_rest_required: true
+  safe_log_fields: [case_id, workspace_id, status, assignee_id, correlation_id]
+  break_glass_required_for_support: true
+
+i18n:
+  supported_locales: [en, km]
+  fallback_locale: en
+  versioned_content: true
+
+offline:
+  supported: true
+  cached_resource_types: [assigned_cases, approved_knowledge, reference_map, draft_observations, pending_media]
+  mutation_idempotency: client_uuid
+  conflict_policy: field_specific
+  device_revoke_clears_cache: true
+
+feature_flags:
+  - key: extension.offline_sync
+    default: true
+    description: Enable encrypted offline drafts and synchronisation.
+  - key: extension.candidate_reasoning
+    default: false
+    description: Enable ranked candidate causes only after agronomic governance approval.
+  - key: extension.language_model_explanation
+    default: false
+    description: Enable constrained translation and explanation with full source citations.
+  - key: extension.aggregate_to_data_hub
+    default: false
+    description: Enable the governed aggregate publication workflow.
+
+dependencies:
+  - type: platform_service
+    key: identity-and-permissions
+    version_constraint: ">=1.0"
+    required: true
+  - type: platform_service
+    key: catalog
+    version_constraint: ">=1.0"
+    required: true
+  - type: platform_service
+    key: jobs
+    version_constraint: ">=1.0"
+    required: true
+  - type: platform_service
+    key: audit
+    version_constraint: ">=1.0"
+    required: true
+  - type: data_profile
+    key: approved-agronomic-knowledge
+    version_constraint: "^1.0"
+    required: true
+  - type: data_profile
+    key: extension-case-aggregate
+    version_constraint: "^1.0"
+    required: false
+
+observability:
+  metrics:
+    - extension_cases_created_total
+    - extension_overdue_followups_total
+    - extension_offline_sync_conflicts_total
+    - extension_media_processing_failures_total
+    - extension_candidate_confirmations_total
+  health_checks:
+    - database
+    - restricted_object_storage
+    - job_queue
+    - offline_sync_api
+    - approved_knowledge_index
+  structured_logging: true
+  sensitive_fields_redacted: true
+
+testing:
+  contract_tests: true
+  permission_tests: true
+  migration_tests: true
+  e2e_critical_paths:
+    - Officer records an offline observation and synchronises it exactly once.
+    - Officer cannot view a case assigned to another officer without an explicit grant.
+    - Candidate causes include approved knowledge-version citations and require officer confirmation.
+    - Sensitive media access uses a short-lived URL and produces an audit event.
+    - Supervisor submits a de-identified aggregate and Data Hub review is required before publication.
+
+compatibility:
+  minimum_platform_version: 1.0.0
+  breaking_change_policy: major_version_required
+  retirement_policy: Export or migrate active cases, preserve legally required audit and consent records, and revoke offline caches before module retirement.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import time
+from datetime import timedelta
 
 from minio import Minio
 from minio.error import S3Error
@@ -11,16 +12,32 @@ from app.config import (
     MINIO_BUCKET,
     MINIO_ENDPOINT,
     MINIO_SECRET_KEY,
-    MINIO_SECURE,
+    OBJECT_STORE_INTERNAL_ENDPOINT,
+    OBJECT_STORE_PUBLIC_ENDPOINT,
+    OBJECT_STORE_REGION,
+    OBJECT_STORE_SECURE,
+    PRESIGNED_URL_TTL_SECONDS,
 )
 
 
 def object_client() -> Minio:
     return Minio(
-        MINIO_ENDPOINT,
+        OBJECT_STORE_INTERNAL_ENDPOINT or MINIO_ENDPOINT,
         access_key=MINIO_ACCESS_KEY,
         secret_key=MINIO_SECRET_KEY,
-        secure=MINIO_SECURE,
+        secure=OBJECT_STORE_SECURE,
+    )
+
+
+def public_object_client() -> Minio:
+    """Client used only to sign browser-facing URLs; credentials never leave the API."""
+
+    return Minio(
+        OBJECT_STORE_PUBLIC_ENDPOINT,
+        access_key=MINIO_ACCESS_KEY,
+        secret_key=MINIO_SECRET_KEY,
+        secure=OBJECT_STORE_SECURE,
+        region=OBJECT_STORE_REGION,
     )
 
 
@@ -66,3 +83,28 @@ def remove_object(object_key: str) -> None:
     except S3Error:
         pass
 
+
+def presigned_put(object_key: str, ttl_seconds: int = PRESIGNED_URL_TTL_SECONDS) -> str:
+    return public_object_client().presigned_put_object(
+        MINIO_BUCKET, object_key, expires=timedelta(seconds=ttl_seconds)
+    )
+
+
+def presigned_get(object_key: str, ttl_seconds: int = PRESIGNED_URL_TTL_SECONDS) -> str:
+    return public_object_client().presigned_get_object(
+        MINIO_BUCKET, object_key, expires=timedelta(seconds=ttl_seconds)
+    )
+
+
+def stat_object(object_key: str):
+    return object_client().stat_object(MINIO_BUCKET, object_key)
+
+
+def copy_object(source_key: str, destination_key: str) -> None:
+    from minio.commonconfig import CopySource
+
+    object_client().copy_object(
+        MINIO_BUCKET,
+        destination_key,
+        CopySource(MINIO_BUCKET, source_key),
+    )

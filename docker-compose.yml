@@ -38,21 +38,65 @@ services:
       - minio_data:/data
     restart: unless-stopped
 
-  seed:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  migrate:
     build:
       context: ./api
-    environment:
+    environment: &api-environment
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-rice_dss}:${POSTGRES_PASSWORD:-rice_demo_change_me}@db:5432/${POSTGRES_DB:-rice_dss}
+      APP_ENV: ${APP_ENV:-development}
+      AUTH_MODE: ${AUTH_MODE:-dev}
+      ALLOW_DEV_IDENTITY_HEADERS: ${ALLOW_DEV_IDENTITY_HEADERS:-true}
+      DEFAULT_DEV_USER_SUBJECT: ${DEFAULT_DEV_USER_SUBJECT:-dev-admin}
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-dss_local_admin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-dss_local_storage_change_me}
       MINIO_BUCKET: ${MINIO_BUCKET:-dss-data}
-    command: ["python", "-m", "app.seed"]
+      OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-${MINIO_BUCKET:-dss-data}}
+      OBJECT_STORE_INTERNAL_ENDPOINT: ${OBJECT_STORE_INTERNAL_ENDPOINT:-minio:9000}
+      OBJECT_STORE_PUBLIC_ENDPOINT: ${OBJECT_STORE_PUBLIC_ENDPOINT:-localhost:9000}
+      OBJECT_STORE_SECURE: ${OBJECT_STORE_SECURE:-false}
+      PRESIGNED_URL_TTL_SECONDS: ${PRESIGNED_URL_TTL_SECONDS:-900}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-false}
+      ALLOW_INSECURE_DEV_FILE_SCAN: ${ALLOW_INSECURE_DEV_FILE_SCAN:-true}
+      MAX_DATA_HUB_UPLOAD_BYTES: ${MAX_DATA_HUB_UPLOAD_BYTES:-104857600}
+    command: ["alembic", "upgrade", "head"]
     volumes:
       - ./api:/app
     depends_on:
       db:
         condition: service_healthy
+    restart: "no"
+
+  seed:
+    build:
+      context: ./api
+    environment: *api-environment
+    command: ["python", "-m", "app.seed"]
+    volumes:
+      - ./api:/app
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
       minio:
         condition: service_started
     restart: "no"
@@ -61,12 +105,8 @@ services:
     build:
       context: ./api
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-rice_dss}:${POSTGRES_PASSWORD:-rice_demo_change_me}@db:5432/${POSTGRES_DB:-rice_dss}
+      <<: *api-environment
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
-      MINIO_ENDPOINT: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-dss_local_admin}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-dss_local_storage_change_me}
-      MINIO_BUCKET: ${MINIO_BUCKET:-dss-data}
       MAX_UPLOAD_BYTES: 26214400
     command:
       [
@@ -85,6 +125,8 @@ services:
     depends_on:
       seed:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     healthcheck:
       test:
         [
@@ -94,6 +136,34 @@ services:
           "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
         ]
       interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ./api
+    environment: *api-environment
+    command:
+      [
+        "celery",
+        "-A",
+        "app.jobs:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--concurrency=1",
+        "--hostname=platform-worker@%h",
+      ]
+    volumes:
+      - ./api:/app
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.jobs:celery_app inspect ping --timeout 2 | grep -q pong"]
+      interval: 15s
       timeout: 5s
       retries: 12
     restart: unless-stopped
@@ -134,5 +204,6 @@ services:
 volumes:
   postgis_data:
   minio_data:
+  redis_data:
   web_node_modules:
   geoserver_data:

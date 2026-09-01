@@ -1,0 +1,344 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.fao.org/schemas/module-contract/1.0/schema.json",
+  "title": "FAO Climate Platform Module Contract",
+  "description": "Machine-verifiable manifest for a platform business module.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "module",
+    "ownership",
+    "routes",
+    "api",
+    "permissions",
+    "data",
+    "persistence",
+    "jobs",
+    "events",
+    "audit",
+    "security",
+    "i18n",
+    "offline",
+    "feature_flags",
+    "dependencies",
+    "observability",
+    "testing",
+    "compatibility"
+  ],
+  "properties": {
+    "contract_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$"
+    },
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "name", "version", "status", "description"],
+      "properties": {
+        "key": {"$ref": "#/$defs/moduleKey"},
+        "name": {"type": "string", "minLength": 3},
+        "version": {"$ref": "#/$defs/semver"},
+        "status": {"enum": ["experimental", "alpha", "beta", "stable", "deprecated", "retired"]},
+        "description": {"type": "string", "minLength": 10}
+      }
+    },
+    "ownership": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product_owner", "technical_owner", "support_contact"],
+      "properties": {
+        "product_owner": {"type": "string", "minLength": 1},
+        "technical_owner": {"type": "string", "minLength": 1},
+        "data_owner_groups": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "method_owner_groups": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "content_owner_groups": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "support_contact": {"type": "string", "minLength": 1}
+      }
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/route"}
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_path", "version", "openapi_tag", "idempotency_required_for_mutations"],
+      "properties": {
+        "base_path": {"type": "string", "pattern": "^/api/apps/[a-z0-9-]+/v[0-9]+$"},
+        "version": {"type": "string", "pattern": "^v[0-9]+$"},
+        "openapi_tag": {"type": "string", "minLength": 1},
+        "idempotency_required_for_mutations": {"type": "boolean"},
+        "error_namespace": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"}
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required_to_enter", "declared"],
+      "properties": {
+        "required_to_enter": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/permissionCode"},
+          "uniqueItems": true
+        },
+        "declared": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["code", "description"],
+            "properties": {
+              "code": {"$ref": "#/$defs/permissionCode"},
+              "description": {"type": "string", "minLength": 3}
+            }
+          }
+        }
+      }
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputs", "outputs"],
+      "properties": {
+        "inputs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/inputProfile"}
+        },
+        "outputs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/outputProfile"}
+        }
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["database_schema", "cross_schema_writes", "object_prefixes", "migrations"],
+      "properties": {
+        "database_schema": {"type": "string", "pattern": "^[a-z][a-z0-9_]*$"},
+        "cross_schema_writes": {"const": false},
+        "object_prefixes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "migrations": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tool", "ownership"],
+          "properties": {
+            "tool": {"enum": ["alembic"]},
+            "ownership": {"enum": ["module"]}
+          }
+        }
+      }
+    },
+    "jobs": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/job"}
+    },
+    "events": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["emits", "consumes"],
+      "properties": {
+        "emits": {"type": "array", "items": {"$ref": "#/$defs/eventName"}, "uniqueItems": true},
+        "consumes": {"type": "array", "items": {"$ref": "#/$defs/eventName"}, "uniqueItems": true}
+      }
+    },
+    "audit": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*){2,}$"},
+      "uniqueItems": true
+    },
+    "security": {
+      "$ref": "#/$defs/security"
+    },
+    "i18n": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supported_locales", "fallback_locale"],
+      "properties": {
+        "supported_locales": {"type": "array", "minItems": 1, "items": {"type": "string"}, "uniqueItems": true},
+        "fallback_locale": {"type": "string"},
+        "versioned_content": {"type": "boolean"}
+      }
+    },
+    "offline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["supported"],
+      "properties": {
+        "supported": {"type": "boolean"},
+        "cached_resource_types": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "mutation_idempotency": {"enum": ["not_applicable", "client_uuid", "idempotency_key"]},
+        "conflict_policy": {"enum": ["not_applicable", "server_wins", "client_wins", "manual_merge", "field_specific"]},
+        "device_revoke_clears_cache": {"type": "boolean"}
+      }
+    },
+    "feature_flags": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["key", "default"],
+        "properties": {
+          "key": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"},
+          "default": {"type": "boolean"},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/dependency"}
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["metrics", "health_checks", "structured_logging"],
+      "properties": {
+        "metrics": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "health_checks": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "structured_logging": {"type": "boolean"},
+        "sensitive_fields_redacted": {"type": "boolean"}
+      }
+    },
+    "testing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_tests", "permission_tests", "migration_tests", "e2e_critical_paths"],
+      "properties": {
+        "contract_tests": {"type": "boolean"},
+        "permission_tests": {"type": "boolean"},
+        "migration_tests": {"type": "boolean"},
+        "e2e_critical_paths": {"type": "array", "minItems": 1, "items": {"type": "string"}}
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minimum_platform_version", "breaking_change_policy", "retirement_policy"],
+      "properties": {
+        "minimum_platform_version": {"$ref": "#/$defs/semver"},
+        "breaking_change_policy": {"enum": ["major_version_required"]},
+        "retirement_policy": {"type": "string", "minLength": 10}
+      }
+    }
+  },
+  "$defs": {
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$"
+    },
+    "moduleKey": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "permissionCode": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$"
+    },
+    "eventName": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+\\.v[0-9]+$"
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "title", "permissions", "layout", "offline_capable", "navigation"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^/apps/[a-z0-9-]+(?:/.*)?$"},
+        "title": {"type": "string", "minLength": 1},
+        "permissions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/permissionCode"}, "uniqueItems": true},
+        "layout": {"enum": ["desktop", "mobile", "adaptive"]},
+        "offline_capable": {"type": "boolean"},
+        "navigation": {"enum": ["primary", "secondary", "hidden"]},
+        "feature_flag": {"type": "string"}
+      }
+    },
+    "inputProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "profile", "version", "required", "selection_mode", "allowed_states"],
+      "properties": {
+        "role": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+        "profile": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+        "required": {"type": "boolean"},
+        "selection_mode": {"enum": ["exact_version"]},
+        "allowed_states": {"type": "array", "minItems": 1, "items": {"enum": ["validated", "approved", "published"]}, "uniqueItems": true},
+        "multiple": {"type": "boolean"},
+        "quality_profile": {"type": "string"},
+        "notes": {"type": "string"}
+      }
+    },
+    "outputProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "profile", "version", "register_in_catalog", "lineage_required", "default_visibility", "default_classification", "review_required"],
+      "properties": {
+        "role": {"type": "string", "pattern": "^[a-z][a-z0-9_-]*$"},
+        "profile": {"type": "string", "pattern": "^[a-z][a-z0-9-]*$"},
+        "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+$"},
+        "register_in_catalog": {"type": "boolean"},
+        "lineage_required": {"type": "boolean"},
+        "default_visibility": {"enum": ["private", "restricted", "workspace", "team", "fao_internal", "public"]},
+        "default_classification": {"enum": ["public", "fao_internal", "restricted", "sensitive_field"]},
+        "review_required": {"type": "boolean"},
+        "representations": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "retention_policy": {"type": "string"},
+        "notes": {"type": "string"}
+      }
+    },
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "idempotent", "max_attempts", "cancellable", "visible_steps"],
+      "properties": {
+        "type": {"type": "string", "pattern": "^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*:v[0-9]+$"},
+        "queue": {"type": "string"},
+        "idempotent": {"type": "boolean"},
+        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 20},
+        "cancellable": {"type": "boolean"},
+        "visible_steps": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maximum_classification",
+        "contains_personal_data",
+        "contains_precise_location",
+        "row_level_rules",
+        "download_policy",
+        "retention_policy",
+        "break_glass_required_for_support"
+      ],
+      "properties": {
+        "maximum_classification": {"enum": ["public", "fao_internal", "restricted", "sensitive_field"]},
+        "contains_personal_data": {"type": "boolean"},
+        "contains_precise_location": {"type": "boolean"},
+        "row_level_rules": {"type": "array", "items": {"type": "string"}},
+        "download_policy": {"type": "string", "minLength": 3},
+        "retention_policy": {"type": "string", "minLength": 3},
+        "consent_required": {"type": "boolean"},
+        "encryption_at_rest_required": {"type": "boolean"},
+        "safe_log_fields": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "break_glass_required_for_support": {"type": "boolean"}
+      }
+    },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "key", "version_constraint", "required"],
+      "properties": {
+        "type": {"enum": ["platform_service", "module", "external_service", "data_profile"]},
+        "key": {"type": "string", "minLength": 1},
+        "version_constraint": {"type": "string", "minLength": 1},
+        "required": {"type": "boolean"}
+      }
+    }
+  }
+}
