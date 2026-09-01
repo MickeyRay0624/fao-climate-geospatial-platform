@@ -8,7 +8,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request
 from sqlalchemy import func, or_, select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.audit_service import record_event
@@ -20,7 +19,6 @@ from app.identity import Principal, get_current_principal
 from app.jobs import process_upload_session
 from app.object_store import presigned_get, presigned_put, stat_object
 from app.platform_models import (
-    AuditEvent,
     CatalogAsset,
     CatalogDataset,
     CatalogDatasetVersion,

@@ -24,7 +24,6 @@ from app.identity import Principal
 from app.investment.canonical import canonical_json, checksum_json
 from app.investment.constants import (
     INDICATOR_CODES,
-    LEGACY_METHOD_SPEC,
     METHOD_IMPLEMENTATION_KEY,
     strictest_classification,
 )
@@ -44,12 +43,10 @@ from app.platform_models import (
     InvestmentPriorityResult,
     InvestmentRunComparison,
     InvestmentScenario,
-    InvestmentScenarioParameter,
     LineageEdge,
     LineageProcess,
     MetadataRecord,
     Representation,
-    ReviewRequest,
 )
 
 

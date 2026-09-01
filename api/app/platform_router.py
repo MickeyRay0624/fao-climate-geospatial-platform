@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
@@ -24,7 +23,6 @@ from app.identity import Principal, get_current_principal
 from app.jobs import celery_app, process_upload_session
 from app.platform_models import (
     AuditEvent,
-    CatalogDataset,
     CatalogDatasetVersion,
     Group,
     GroupMembership,
@@ -34,9 +32,7 @@ from app.platform_models import (
     ProcessingJob,
     Role,
     RoleAssignment,
-    UploadSession,
     User,
-    Workspace,
     WorkspaceMembership,
     WorkspaceModule,
 )

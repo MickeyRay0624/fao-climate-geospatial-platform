@@ -28,7 +28,6 @@ from app.authorization import assert_permission
 from app.data_management import (
     available_analysis_versions,
     catalog_payload,
-    serialise_version,
 )
 from app.database import SessionLocal, get_session
 from app.errors import PlatformError
