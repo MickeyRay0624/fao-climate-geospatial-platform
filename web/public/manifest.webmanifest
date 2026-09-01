@@ -1,7 +1,7 @@
 {
   "name": "FAO Climate Platform — Extension Field Support",
   "short_name": "Field Support",
-  "description": "Non-AI demonstration workflow for assigned field cases and offline drafts.",
+  "description": "Manual demonstration workflow for assigned field cases and offline drafts.",
   "start_url": "/apps/extension-field-support/worklist",
   "display": "standalone",
   "background_color": "#f4f7f5",

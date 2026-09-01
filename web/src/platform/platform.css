@@ -1430,7 +1430,7 @@ button.secondary-button {
 .native-run-wizard span { display: grid; width: 18px; height: 18px; place-items: center; background: #fff; border-radius: 50%; font-weight: 800; }
 .native-run-wizard .complete { color: #175d50; background: #e4f0eb; }
 
-/* Extension Officer Field Support — isolated, non-AI workflow */
+/* Extension Officer Field Support — isolated manual workflow */
 .extension-module { --extension-ink: #163b35; --extension-green: #216d5d; max-width: 1500px; margin: 0 auto; color: var(--extension-ink); }
 .extension-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 21px 24px; color: #fff; background: linear-gradient(120deg, #163f38, #236b5b); border-radius: 10px 10px 0 0; }
 .extension-header h1 { margin: 3px 0 5px; font-size: 1.35rem; }

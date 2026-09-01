@@ -60,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="FAO Climate Geospatial Data & Decision Platform API",
-    version="1.0.0-phase2a",
+    version="0.3.0-demo-platform",
     description=(
         "Versioned spatial data management and transparent multi-criteria analysis "
         "for a local demonstrator."
