@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from app.audit_service import record_event
 from app.authorization import assert_permission, can_access_dataset
-from app.catalog import INDICATORS
 from app.config import DEMO_DISCLAIMER
 from app.database import get_session
 from app.errors import PlatformError, conflict, forbidden, not_found
@@ -77,7 +76,6 @@ from app.platform_models import (
     InvestmentIndicatorDefinition,
     InvestmentMethodDefinition,
     InvestmentMethodVersion,
-    InvestmentPriorityResult,
     InvestmentRunComparison,
     InvestmentScenario,
     InvestmentScenarioParameter,

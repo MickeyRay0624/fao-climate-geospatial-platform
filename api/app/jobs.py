@@ -16,7 +16,6 @@ from app.config import (
     CELERY_RESULT_BACKEND,
     CELERY_TASK_ALWAYS_EAGER,
 )
-from app.data_management import import_parsed_records
 from app.database import SessionLocal
 from app.models import AdminArea
 from app.object_store import copy_object, get_bytes, remove_object

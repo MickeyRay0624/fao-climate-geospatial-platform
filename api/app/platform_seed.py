@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import DEMO_DISCLAIMER
-from app.models import AdminArea, AnalysisRun, DataCatalogItem, DataVersion
+from app.models import AdminArea, AnalysisRun, DataCatalogItem
 from app.module_registry import load_validated_manifests
 from app.platform_models import (
     CatalogAsset,

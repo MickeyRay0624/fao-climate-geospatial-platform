@@ -47,7 +47,6 @@ from app.platform_models import (
     InvestmentAnalysisRunInput,
     InvestmentMethodVersion,
     InvestmentPriorityResult,
-    InvestmentScenario,
     LegacyIdMapping,
     LineageEdge,
     LineageProcess,

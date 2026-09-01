@@ -6,7 +6,6 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-import uuid
 from datetime import datetime, timezone
 from urllib.request import Request, urlopen
 
