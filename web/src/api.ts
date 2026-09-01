@@ -8,6 +8,8 @@ import type {
   NativeAsset,
   NativeComparison,
   NativeInputSet,
+  InvestmentInputCandidate,
+  InvestmentReadiness,
   NativeMethod,
   NativeResultResponse,
   NativeRun,
@@ -367,8 +369,12 @@ export function getInvestmentOverview(): Promise<Record<string, unknown>> {
   return requestJson(`${investmentBase}/overview`);
 }
 
-export function getInvestmentDataProfiles(): Promise<{ indicators: Array<{ code: string; title: string; unit: string; direction: string }>; profiles: Array<Record<string, unknown>> }> {
+export function getInvestmentDataProfiles(): Promise<{ indicators: Array<{ code: string; title: string; unit: string; direction: string }>; profiles: Array<Record<string, unknown>>; candidates: InvestmentInputCandidate[] }> {
   return requestJson(`${investmentBase}/data-profiles`);
+}
+
+export function getInvestmentReadiness(): Promise<InvestmentReadiness> {
+  return requestJson(`${investmentBase}/readiness`);
 }
 
 export function getInvestmentInputSets(): Promise<{ items: NativeInputSet[]; meta: Record<string, number> }> {
@@ -391,6 +397,42 @@ export function lockInvestmentInputSet(item: NativeInputSet): Promise<NativeInpu
   return requestJson(`${investmentBase}/input-sets/${item.id}/lock`, {
     method: "POST",
     body: JSON.stringify({ reason: "Lock exact versions for a reproducible formal run", row_version: item.row_version }),
+  });
+}
+
+export function addInvestmentInputMember(
+  inputSetId: string,
+  candidate: InvestmentInputCandidate,
+  ordinal: number,
+): Promise<NativeInputSet> {
+  const mapping = candidate.suggested_mapping;
+  return requestJson(`${investmentBase}/input-sets/${inputSetId}/members`, {
+    method: "POST",
+    body: JSON.stringify({
+      dataset_version_id: candidate.version.id,
+      representation_id: candidate.representation.id,
+      input_role: mapping.input_role,
+      indicator_code: mapping.indicator_code,
+      join_key: mapping.join_key,
+      value_field: mapping.value_field,
+      geometry_field: mapping.geometry_field,
+      unit: mapping.unit,
+      direction: mapping.direction,
+      time_coverage: {},
+      required: true,
+      transform_config: {},
+      ordinal,
+    }),
+  });
+}
+
+export function cloneInvestmentInputSet(item: NativeInputSet): Promise<NativeInputSet> {
+  return requestJson(`${investmentBase}/input-sets/${item.id}/clone`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: `${item.name}-clone-${Date.now()}`,
+      label: `${item.label} — editable clone`,
+    }),
   });
 }
 

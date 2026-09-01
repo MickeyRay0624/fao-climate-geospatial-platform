@@ -15,10 +15,12 @@ from app.models import PriorityResult as LegacyPriorityResult
 from app.platform_models import (
     InvestmentAnalysisRun,
     InvestmentAnalysisRunInput,
+    InvestmentAnalysisInputSet,
     InvestmentMethodDefinition,
     InvestmentMethodVersion,
     InvestmentPriorityResult,
     InvestmentScenario,
+    IdempotencyRecord,
     JobStep,
     LegacyIdMapping,
     ProcessingJob,
@@ -84,6 +86,105 @@ def test_legacy_analysis_command_is_gone_and_never_dual_writes() -> None:
         )
     assert before in {(0, 0), (13, 1443)}
     assert after == before
+
+
+def test_real_pilot_readiness_is_incomplete_and_read_only() -> None:
+    with SessionLocal() as session:
+        before = (
+            session.scalar(select(func.count(InvestmentAnalysisRun.id))),
+            session.scalar(select(func.count(InvestmentPriorityResult.id))),
+        )
+    response = client.get(f"{BASE}/readiness", headers=ANALYST)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ready_to_run"] is False
+    assert payload["boundary_available"] is True
+    assert payload["available_indicator_roles"] == ["poverty_index"]
+    assert set(payload["missing_required_roles"]) == {
+        "yield_gap",
+        "drought_risk",
+        "flood_risk",
+        "irrigation_gap",
+        "market_isolation",
+        "nbs_opportunity",
+    }
+    assert payload["record_coverage"]["boundary_records"] == 26
+    assert payload["record_coverage"]["poverty_records"] == 26
+    assert "LICENCE_NOT_CONFIRMED" in payload["reason_codes"]
+    with SessionLocal() as session:
+        after = (
+            session.scalar(select(func.count(InvestmentAnalysisRun.id))),
+            session.scalar(select(func.count(InvestmentPriorityResult.id))),
+        )
+    assert after == before
+
+
+def test_incomplete_input_set_cannot_lock_or_create_run() -> None:
+    suffix = uuid4().hex
+    create_key = f"pytest-incomplete-create-{suffix}"
+    lock_key = f"pytest-incomplete-lock-{suffix}"
+    run_key = f"pytest-incomplete-run-{suffix}"
+    headers = {**ANALYST, "Idempotency-Key": create_key}
+    created = client.post(
+        f"{BASE}/input-sets",
+        headers=headers,
+        json={
+            "name": f"incomplete-{suffix}",
+            "label": "Temporary incomplete readiness test",
+            "profile_mode": "SEPARATE_LAYERS",
+            "study_area_ref": {},
+            "run_mode_compatibility": ["FORMAL"],
+        },
+    )
+    assert created.status_code == 201
+    item = created.json()
+    try:
+        with SessionLocal() as session:
+            before = (
+                session.scalar(select(func.count(InvestmentAnalysisRun.id))),
+                session.scalar(select(func.count(InvestmentPriorityResult.id))),
+            )
+        lock = client.post(
+            f"{BASE}/input-sets/{item['id']}/lock",
+            headers={**ANALYST, "Idempotency-Key": lock_key},
+            json={"reason": "Negative readiness contract test.", "row_version": item["row_version"]},
+        )
+        assert lock.status_code == 409
+        assert lock.json()["error"]["code"] == "INPUT_SET_NOT_READY"
+
+        scenario = next(
+            value
+            for value in client.get(f"{BASE}/scenarios?page_size=100", headers=ANALYST).json()["items"]
+            if value["scenario_key"] == "balanced"
+        )
+        rejected = client.post(
+            f"{BASE}/runs",
+            headers={**ANALYST, "Idempotency-Key": run_key},
+            json={
+                "input_set_id": item["id"],
+                "method_version_id": scenario["method_version_id"],
+                "scenario_id": scenario["id"],
+                "run_mode": "FORMAL",
+                "overrides": {},
+            },
+        )
+        assert rejected.status_code == 409
+        assert rejected.json()["error"]["code"] == "LOCKED_INPUT_SET_REQUIRED"
+        with SessionLocal() as session:
+            after = (
+                session.scalar(select(func.count(InvestmentAnalysisRun.id))),
+                session.scalar(select(func.count(InvestmentPriorityResult.id))),
+            )
+        assert after == before
+    finally:
+        with SessionLocal() as session:
+            session.query(IdempotencyRecord).filter(
+                IdempotencyRecord.idempotency_key.in_([create_key, lock_key, run_key])
+            ).delete(synchronize_session=False)
+            exact = session.get(InvestmentAnalysisInputSet, item["id"])
+            if exact:
+                session.delete(exact)
+            session.commit()
 
 
 def test_run_create_freezes_snapshot_and_enforces_idempotency(monkeypatch) -> None:

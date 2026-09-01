@@ -1333,6 +1333,7 @@ button.secondary-button {
 .native-hero { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 28px; background: linear-gradient(120deg, #f7f5e9, #edf5f1); }
 .native-hero h2 { margin: 3px 0 8px; font-size: 1.65rem; }
 .native-hero p:last-child { max-width: 720px; margin: 0; color: var(--muted); }
+.native-hero-actions { display: grid; gap: 8px; justify-items: stretch; }
 .native-link-button { display: inline-flex; flex: none; align-items: center; text-decoration: none; }
 .native-summary { margin: 0; }
 .small-authority { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88rem !important; }
@@ -1371,6 +1372,7 @@ button.secondary-button {
 .native-governance-card { padding: 17px 0; border-top: 1px solid var(--line); }
 .native-version-row { display: grid; grid-template-columns: auto auto auto 1fr; align-items: center; gap: 10px; margin-top: 10px; padding: 11px; background: #f7f8f5; border-radius: 6px; font-size: .65rem; }
 .native-version-row small { grid-column: 1 / -1; color: var(--muted); }
+.native-version-row { color: inherit; text-decoration: none; }
 .scenario-weight-list { display: grid !important; gap: 4px !important; margin: 10px 0; }
 .scenario-weight-list span { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 6px; font-size: .59rem; }
 .native-run-header { display: flex; align-items: center; justify-content: space-between; padding: 20px 23px; }
@@ -1399,12 +1401,43 @@ button.secondary-button {
 .comparison-evidence span { color: var(--muted); font-size: .6rem; }
 .comparison-evidence strong { font-size: 1.25rem; }
 .comparison-evidence p { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.native-readiness-callout, .native-readiness-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 22px; }
+.native-readiness-callout h2, .native-readiness-header h2 { margin: 3px 0 7px; }
+.native-readiness-callout p, .native-readiness-header p { max-width: 760px; color: var(--muted); font-size: .7rem; line-height: 1.5; }
+.native-readiness-callout > div:last-child, .native-readiness-header > div:last-child { display: grid; flex: none; justify-items: end; gap: 8px; }
+.native-readiness-callout a { color: #176c64; font-size: .66rem; font-weight: 750; }
+.native-readiness-header strong { color: #8a302c; }
+.native-readiness-header small { color: var(--muted); font-size: .58rem; }
+.readiness-role-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-bottom: 14px; }
+.readiness-role { min-width: 0; padding: 15px; border-top: 3px solid #b65c4e; }
+.readiness-role.available { border-top-color: #27795f; }
+.readiness-role > div { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.readiness-role > div code { color: var(--muted); font-size: .53rem; }
+.readiness-role h3 { margin: 13px 0 7px; font-size: .82rem; }
+.readiness-role a { display: block; color: #176c64; font-size: .65rem; font-weight: 700; }
+.readiness-role p, .readiness-role small { color: var(--muted); font-size: .59rem; line-height: 1.5; }
+.readiness-evidence-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.reason-code-list, .input-readiness-errors ul { display: flex; flex-wrap: wrap; gap: 6px; padding: 0; list-style: none; }
+.reason-code-list li, .input-readiness-errors li { padding: 5px 7px; background: #f7e9e4; border-radius: 4px; font-size: .59rem; }
+.input-candidate-builder { margin: 18px 0; padding: 16px; background: #f5f8f6; border: 1px solid var(--line); border-radius: 7px; }
+.input-candidate-builder h3 { margin: 3px 0; }
+.input-readiness-errors { margin: 14px 0; padding: 13px; color: #792f28; background: #fff5f2; border: 1px solid #eccdc4; border-radius: 6px; font-size: .66rem; }
+.native-run-filters { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 8px; margin: 18px 0; }
+.native-run-filters label { display: grid; gap: 5px; color: var(--muted); font-size: .59rem; font-weight: 700; }
+.native-run-filters select, .native-run-filters input { min-width: 0; padding: 7px; border: 1px solid var(--line); border-radius: 5px; }
+.native-run-wizard { display: grid; grid-template-columns: repeat(6, 1fr); gap: 1px; margin: 18px 0; padding: 0; list-style: none; }
+.native-run-wizard li { display: flex; align-items: center; gap: 5px; padding: 9px 7px; color: var(--muted); background: #edf1ef; font-size: .58rem; }
+.native-run-wizard span { display: grid; width: 18px; height: 18px; place-items: center; background: #fff; border-radius: 50%; font-weight: 800; }
+.native-run-wizard .complete { color: #175d50; background: #e4f0eb; }
 
 @media (max-width: 900px) {
-  .native-hero, .native-run-header, .native-progress { align-items: stretch; flex-direction: column; }
+  .native-hero, .native-run-header, .native-progress, .native-readiness-callout, .native-readiness-header { align-items: stretch; flex-direction: column; }
   .native-module-nav { justify-content: flex-start; }
   .run-form, .native-selected { grid-template-columns: 1fr; }
   .comparison-evidence { grid-template-columns: repeat(2, 1fr); }
+  .readiness-role-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .native-run-filters { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .native-readiness-callout > div:last-child, .native-readiness-header > div:last-child { justify-items: start; }
 }
 .preview-result-note { align-self: center; padding: 7px 9px; color: #7b5a20; background: #fff2d7; border: 1px solid #ead29f; border-radius: 5px; font-size: 0.62rem; font-weight: 700; }
 .home-role-grid, .applications-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 16px 0 24px; }
@@ -1536,4 +1569,7 @@ button.secondary-button {
   .dataset-table-view .dataset-card > p, .dataset-table-view .dataset-card dl { display: none; }
   .search-results > a { grid-template-columns: 1fr auto; }
   .search-results > a > span { grid-column: 1 / -1; }
+  .readiness-role-grid, .readiness-evidence-grid { grid-template-columns: 1fr; }
+  .native-run-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .native-run-wizard { grid-template-columns: repeat(3, 1fr); }
 }

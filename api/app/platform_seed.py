@@ -24,6 +24,7 @@ from app.platform_models import (
     Module,
     Organization,
     Permission,
+    PermissionGrant,
     QualityIssue,
     QualityProfile,
     QualityRun,
@@ -448,33 +449,79 @@ def _seed_demo_collection(
             CatalogDataset.current_published_version_id.is_not(None),
         )
     ).all()
+    analyst_group = session.scalar(
+        select(Group).where(
+            Group.workspace_id == workspace.id,
+            Group.slug == "spatial-analysts",
+        )
+    )
     for ordinal, dataset in enumerate(
         sorted(candidates, key=lambda item: item.title), start=1
     ):
         title = dataset.title.lower()
         if "gaul" not in title and "mpi" not in title:
             continue
-        if session.scalar(
+        member_exists = session.scalar(
             select(CollectionMember.id).where(
                 CollectionMember.collection_id == collection.id,
                 CollectionMember.dataset_version_id
                 == dataset.current_published_version_id,
             )
-        ):
-            continue
-        session.add(
-            CollectionMember(
-                id=stable_id(
-                    "collection-member",
-                    f"{collection.id}:{dataset.current_published_version_id}",
-                ),
-                collection_id=collection.id,
-                dataset_id=dataset.id,
-                dataset_version_id=dataset.current_published_version_id,
-                role="boundary" if "gaul" in title else "poverty-indicator",
-                ordinal=ordinal,
-            )
         )
+        if not member_exists:
+            session.add(
+                CollectionMember(
+                    id=stable_id(
+                        "collection-member",
+                        f"{collection.id}:{dataset.current_published_version_id}",
+                    ),
+                    collection_id=collection.id,
+                    dataset_id=dataset.id,
+                    dataset_version_id=dataset.current_published_version_id,
+                    role="boundary" if "gaul" in title else "poverty-indicator",
+                    ordinal=ordinal,
+                )
+            )
+        if analyst_group:
+            for permission_code in (
+                "dataset.view_metadata",
+                "dataset.preview",
+                "dataset.download",
+                "lineage.view",
+            ):
+                existing_grant = session.scalar(
+                    select(PermissionGrant.id).where(
+                        PermissionGrant.workspace_id == workspace.id,
+                        PermissionGrant.subject_type == "group",
+                        PermissionGrant.subject_id == analyst_group.id,
+                        PermissionGrant.resource_type == "dataset",
+                        PermissionGrant.resource_id == dataset.id,
+                        PermissionGrant.permission_code == permission_code,
+                        PermissionGrant.effect == "ALLOW",
+                    )
+                )
+                if existing_grant:
+                    continue
+                session.add(
+                    PermissionGrant(
+                        id=stable_id(
+                            "real-showcase-grant",
+                            f"{analyst_group.id}:{dataset.id}:{permission_code}",
+                        ),
+                        workspace_id=workspace.id,
+                        subject_type="group",
+                        subject_id=analyst_group.id,
+                        resource_type="dataset",
+                        resource_id=dataset.id,
+                        permission_code=permission_code,
+                        effect="ALLOW",
+                        created_by=owner.id,
+                        reason=(
+                            "Permit spatial analysts to inspect exact real-source "
+                            "samples in the read-only investment readiness showcase."
+                        ),
+                    )
+                )
 
 
 def _backfill_legacy(

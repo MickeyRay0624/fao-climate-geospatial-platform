@@ -68,6 +68,7 @@ from app.platform_models import (
     CatalogAsset,
     CatalogDataset,
     CatalogDatasetVersion,
+    Collection,
     Group,
     IdempotencyRecord,
     InvestmentAnalysisInputMember,
@@ -233,6 +234,284 @@ def _validate_member_reference(
         raise not_found("Dataset representation")
 
 
+def _candidate_payload(
+    dataset: CatalogDataset,
+    version: CatalogDatasetVersion,
+    representation: Representation,
+) -> dict[str, Any]:
+    schema = representation.schema_json or {}
+    indicator_code = schema.get("indicator_code")
+    is_boundary = version.profile_key == "administrative-boundary@1.0"
+    return {
+        "dataset": {
+            "id": str(dataset.id),
+            "title": dataset.title,
+            "classification": dataset.classification,
+            "licence_code": dataset.licence_code,
+        },
+        "version": {
+            "id": str(version.id),
+            "version_label": version.version_label,
+            "state": version.state,
+            "profile_key": version.profile_key,
+        },
+        "representation": {
+            "id": str(representation.id),
+            "type": representation.representation_type,
+            "status": representation.status,
+            "schema": schema,
+            "statistics": representation.statistics_json or {},
+            "crs": representation.crs,
+        },
+        "suggested_mapping": {
+            "input_role": "administrative_boundary" if is_boundary else "indicator",
+            "indicator_code": None if is_boundary else indicator_code,
+            "join_key": schema.get("join_key", "area_code"),
+            "value_field": None if is_boundary else schema.get("value_field", "value"),
+            "geometry_field": "geometry" if is_boundary else None,
+            "unit": schema.get("unit"),
+            "direction": None if is_boundary else schema.get("direction", "higher_is_priority"),
+        },
+        "evidence_type": (
+            "REAL_SAMPLE"
+            if dataset.licence_code == "UNCONFIRMED-SOURCE-LICENCE"
+            else "SYNTHETIC_DEMO"
+            if dataset.licence_code == "DEMO-ONLY"
+            else "GOVERNED"
+        ),
+    }
+
+
+def _input_candidates(
+    session: Session,
+    principal: Principal,
+    *,
+    real_only: bool = False,
+) -> list[dict[str, Any]]:
+    query = (
+        select(CatalogDataset, CatalogDatasetVersion, Representation)
+        .join(
+            CatalogDatasetVersion,
+            CatalogDatasetVersion.id == CatalogDataset.current_published_version_id,
+        )
+        .join(
+            Representation,
+            Representation.dataset_version_id == CatalogDatasetVersion.id,
+        )
+        .where(
+            CatalogDataset.workspace_id == principal.active_workspace_id,
+            CatalogDataset.lifecycle_status != "ARCHIVED",
+            CatalogDatasetVersion.state == "PUBLISHED",
+            CatalogDatasetVersion.profile_key.in_(
+                [
+                    "administrative-boundary@1.0",
+                    "normalised-indicator-layer@1.0",
+                    "analysis-ready-priority-bundle@1.0",
+                ]
+            ),
+            Representation.status == "READY",
+        )
+        .order_by(CatalogDataset.title, Representation.created_at.desc())
+    )
+    if real_only:
+        query = query.where(
+            CatalogDataset.licence_code == "UNCONFIRMED-SOURCE-LICENCE"
+        )
+    candidates: list[dict[str, Any]] = []
+    for dataset, version, representation in session.execute(query).all():
+        if not can_access_dataset(
+            session, principal, dataset, "dataset.view_metadata"
+        ):
+            continue
+        candidates.append(_candidate_payload(dataset, version, representation))
+    return candidates
+
+
+def _real_pilot_readiness(
+    session: Session, principal: Principal
+) -> dict[str, Any]:
+    candidates = _input_candidates(session, principal, real_only=True)
+    boundary = next(
+        (
+            item
+            for item in candidates
+            if item["version"]["profile_key"]
+            == "administrative-boundary@1.0"
+        ),
+        None,
+    )
+    indicator_candidates = {
+        item["suggested_mapping"]["indicator_code"]: item
+        for item in candidates
+        if item["version"]["profile_key"]
+        == "normalised-indicator-layer@1.0"
+        and item["suggested_mapping"]["indicator_code"] in INDICATOR_CODES
+    }
+    fallback_states = {
+        "yield_gap": ("UNRESOLVED", "SOURCE_MAPPING_UNRESOLVED"),
+        "drought_risk": ("MISSING_UNAPPROVED", "SOURCE_MISSING_OR_UNAPPROVED"),
+        "flood_risk": ("MISSING", "SOURCE_MISSING"),
+        "irrigation_gap": ("UNRESOLVED", "SOURCE_MAPPING_UNRESOLVED"),
+        "market_isolation": ("UNRESOLVED", "SOURCE_MAPPING_UNRESOLVED"),
+        "nbs_opportunity": ("MISSING_UNAPPROVED", "SOURCE_MISSING_OR_UNAPPROVED"),
+    }
+    definitions = {
+        item.code: item
+        for item in session.scalars(
+            select(InvestmentIndicatorDefinition).order_by(
+                InvestmentIndicatorDefinition.code
+            )
+        ).all()
+    }
+    roles: list[dict[str, Any]] = [
+        {
+            "role": "administrative_boundary",
+            "label": "Administrative boundary",
+            "state": "AVAILABLE" if boundary else "MISSING",
+            "reason_codes": [] if boundary else ["BOUNDARY_MISSING"],
+            "candidate": boundary,
+        }
+    ]
+    for code in INDICATOR_CODES:
+        candidate = indicator_candidates.get(code)
+        fallback_state, fallback_reason = fallback_states.get(
+            code, ("MISSING", "SOURCE_MISSING")
+        )
+        roles.append(
+            {
+                "role": code,
+                "label": definitions[code].title if code in definitions else code,
+                "state": "AVAILABLE" if candidate else fallback_state,
+                "reason_codes": [] if candidate else [fallback_reason],
+                "candidate": candidate,
+            }
+        )
+
+    real_dataset_ids = {
+        uuid.UUID(item["dataset"]["id"]) for item in candidates
+    }
+    profile_issues: list[dict[str, Any]] = []
+    if real_dataset_ids:
+        historic = session.execute(
+            select(CatalogDatasetVersion, CatalogDataset)
+            .join(CatalogDataset, CatalogDataset.id == CatalogDatasetVersion.dataset_id)
+            .where(
+                CatalogDatasetVersion.dataset_id.in_(real_dataset_ids),
+                CatalogDatasetVersion.id
+                != CatalogDataset.current_published_version_id,
+            )
+            .order_by(CatalogDataset.title, CatalogDatasetVersion.created_at)
+        ).all()
+        for version, dataset in historic:
+            if version.profile_key not in {
+                "administrative-boundary@1.0",
+                "normalised-indicator-layer@1.0",
+            }:
+                profile_issues.append(
+                    {
+                        "code": "HISTORIC_PROFILE_MISMATCH",
+                        "dataset_id": str(dataset.id),
+                        "dataset_title": dataset.title,
+                        "version_id": str(version.id),
+                        "version_label": version.version_label,
+                        "profile_key": version.profile_key,
+                        "effect": "Historical evidence retained; not selected as a pilot input.",
+                    }
+                )
+
+    boundary_count = (
+        int(boundary["representation"]["statistics"].get("record_count", 0))
+        if boundary
+        else 0
+    )
+    poverty = indicator_candidates.get("poverty_index")
+    poverty_count = (
+        int(poverty["representation"]["statistics"].get("record_count", 0))
+        if poverty
+        else 0
+    )
+    join_compatible = bool(
+        boundary
+        and poverty
+        and boundary["suggested_mapping"]["join_key"]
+        == poverty["suggested_mapping"]["join_key"]
+    )
+    missing = [item["role"] for item in roles if item["state"] != "AVAILABLE"]
+    reason_codes = sorted(
+        {
+            reason
+            for item in roles
+            for reason in item["reason_codes"]
+        }
+        | {"LICENCE_NOT_CONFIRMED", "REAL_METHOD_MAPPING_UNRESOLVED"}
+    )
+    collection = session.scalar(
+        select(Collection).where(
+            Collection.workspace_id == principal.active_workspace_id,
+            Collection.slug == "hih-cambodia-data-showcase",
+            Collection.status == "ACTIVE",
+        )
+    )
+    return {
+        "readiness_state": "NOT_READY",
+        "ready_to_run": False,
+        "boundary_available": boundary is not None,
+        "available_indicator_roles": [
+            item["role"]
+            for item in roles[1:]
+            if item["state"] == "AVAILABLE"
+        ],
+        "missing_required_roles": missing,
+        "roles": roles,
+        "profile_issues": profile_issues,
+        "spatial_compatibility": {
+            "state": "DECLARED_JOIN_KEY_MATCH" if join_compatible else "UNRESOLVED",
+            "boundary_join_key": (
+                boundary["suggested_mapping"]["join_key"] if boundary else None
+            ),
+            "poverty_join_key": (
+                poverty["suggested_mapping"]["join_key"] if poverty else None
+            ),
+            "reason_code": (
+                "DECLARED_JOIN_KEY_MATCH"
+                if join_compatible
+                else "SPATIAL_UNIT_MATCH_UNRESOLVED"
+            ),
+        },
+        "record_coverage": {
+            "boundary_records": boundary_count,
+            "poverty_records": poverty_count,
+            "comparable_declared_records": min(boundary_count, poverty_count),
+            "state": "DECLARED_COUNTS_MATCH"
+            if boundary_count and boundary_count == poverty_count
+            else "INCOMPLETE_OR_UNRESOLVED",
+            "note": (
+                "Counts come from profile-validated representations; a formal "
+                "seven-layer analytical join has not been performed."
+            ),
+        },
+        "method_readiness": {
+            "state": "UNRESOLVED",
+            "reason_code": "REAL_METHOD_MAPPING_UNRESOLVED",
+            "note": "The approved illustrative synthetic method is not endorsed for these real samples.",
+        },
+        "reason_codes": reason_codes,
+        "collection": (
+            {
+                "id": str(collection.id),
+                "title": collection.title,
+                "path": f"/data/collections/{collection.id}",
+            }
+            if collection
+            else None
+        ),
+        "warning": (
+            "Real source samples with unconfirmed source licences. This view is "
+            "read-only, incomplete and not operational advice. No run can be started."
+        ),
+    }
+
+
 @router.get("/overview")
 def overview(
     principal: Principal = Depends(get_current_principal),
@@ -349,7 +628,18 @@ def data_profiles(
             }
             for item in indicators
         ],
+        "candidates": _input_candidates(session, principal),
     }
+
+
+@router.get("/readiness")
+def real_pilot_readiness(
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    """Return a read-only real-sample gap assessment; this endpoint never creates a run."""
+    _enter(principal)
+    return _real_pilot_readiness(session, principal)
 
 
 @router.get("/input-sets")
