@@ -13,6 +13,7 @@ import {
   getDevPersonas,
   getExtensionCases,
   getExtensionOverview,
+  getGovernanceSystemHealth,
   getJobs,
   getHomeDashboard,
   getModules,
@@ -34,6 +35,7 @@ vi.mock("./api", async () => {
     getDatasetGrants: vi.fn(),
     getExtensionCases: vi.fn(),
     getExtensionOverview: vi.fn(),
+    getGovernanceSystemHealth: vi.fn(),
   };
 });
 
@@ -202,6 +204,21 @@ beforeEach(() => {
     }],
     meta: { total: 1 },
   });
+  vi.mocked(getGovernanceSystemHealth).mockResolvedValue({
+    status: "OK",
+    services: {
+      database: { status: "OK" },
+      object_storage: { status: "OK" },
+      redis: { status: "OK" },
+      worker: { status: "OK" },
+      migrations: { status: "OK", current: "20260901_0005", expected: "20260901_0005" },
+      scanner: { status: "WARNING", mode: "DEVELOPMENT_BYPASS" },
+    },
+    queue_depth: 0,
+    latest_backup_evidence: { status: "LOCAL_EVIDENCE_PRESENT", created_at: "2026-09-01T00:00:00Z", database_dump: true, checksum_evidence: true, off_host: false },
+    environment: { name: "development", authentication: "dev", development_identity: true },
+    secrets_exposed: false,
+  });
 });
 
 afterEach(() => cleanup());
@@ -248,6 +265,25 @@ describe("platform shell and route policy", () => {
     expect(await screen.findByText("Fictional water-condition observation")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Mobile extension navigation" })).toBeInTheDocument();
     expect(screen.getByText("1 overdue follow-up")).toBeInTheDocument();
+  });
+
+  it("renders live governance health only with the health capability", async () => {
+    vi.mocked(getCapabilities).mockResolvedValue(capabilities(
+      ["workspace.view", "system.health.view"],
+      [nav.home],
+    ));
+    renderRoute("/governance/system-health");
+
+    expect(await screen.findByRole("heading", { name: "System health" })).toBeInTheDocument();
+    expect(screen.getByText("LOCAL EVIDENCE PRESENT")).toBeInTheDocument();
+    expect(screen.getByText("No secrets exposed")).toBeInTheDocument();
+  });
+
+  it("routes every help topic without requiring an application capability", async () => {
+    renderRoute("/help/data-and-method-limitations");
+
+    expect(await screen.findByRole("heading", { name: "Data and method limitations" })).toBeInTheDocument();
+    expect(screen.getByText(/FAO SSO, approved malware scanning/)).toBeInTheDocument();
   });
 });
 

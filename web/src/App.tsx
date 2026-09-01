@@ -33,6 +33,20 @@ function RequirePermission({ permission, children }: { permission: string; child
   return children;
 }
 
+function RequireAnyPermission({ permissions, children }: { permissions: string[]; children: React.ReactNode }) {
+  const { capabilities } = usePlatform();
+  if (!permissions.some((permission) => capabilities.effective_permissions.includes(permission))) {
+    return (
+      <section className="platform-empty-state forbidden-state">
+        <span>403</span>
+        <h1>Access is not available for this role.</h1>
+        <p>The route is hidden from navigation and the API independently enforces the same permission.</p>
+      </section>
+    );
+  }
+  return children;
+}
+
 function PlatformRoutes() {
   return (
     <Routes>
@@ -66,11 +80,18 @@ function PlatformRoutes() {
         }
       />
       <Route path="/apps" element={<ApplicationsPage />} />
+      <Route path="/governance/reviews" element={<RequireAnyPermission permissions={["dataset.review", "extension.knowledge.approve", "workspace.manage_settings"]}><GovernancePage view="reviews" /></RequireAnyPermission>} />
       <Route path="/governance/members" element={<RequirePermission permission="workspace.manage_members"><GovernancePage view="members" /></RequirePermission>} />
       <Route path="/governance/groups" element={<RequirePermission permission="workspace.manage_groups"><GovernancePage view="groups" /></RequirePermission>} />
       <Route path="/governance/roles" element={<RequirePermission permission="workspace.manage_roles"><GovernancePage view="roles" /></RequirePermission>} />
+      <Route path="/governance/data-policies" element={<RequirePermission permission="workspace.manage_settings"><GovernancePage view="data-policies" /></RequirePermission>} />
+      <Route path="/governance/quality-profiles" element={<RequirePermission permission="quality.manage_profiles"><GovernancePage view="quality-profiles" /></RequirePermission>} />
+      <Route path="/governance/knowledge-approvals" element={<RequirePermission permission="extension.knowledge.approve"><GovernancePage view="knowledge-approvals" /></RequirePermission>} />
+      <Route path="/governance/applications" element={<RequirePermission permission="workspace.enable_modules"><GovernancePage view="applications" /></RequirePermission>} />
       <Route path="/governance/audit" element={<RequirePermission permission="audit.view"><AuditPage /></RequirePermission>} />
-      <Route path="/help" element={<HelpPage />} />
+      <Route path="/governance/retention" element={<RequirePermission permission="workspace.manage_settings"><GovernancePage view="retention" /></RequirePermission>} />
+      <Route path="/governance/system-health" element={<RequirePermission permission="system.health.view"><GovernancePage view="system-health" /></RequirePermission>} />
+      <Route path="/help/*" element={<HelpPage />} />
       <Route path="*" element={<section className="platform-empty-state"><span>404</span><h1>Page not found</h1><p>Use the workspace navigation to continue.</p></section>} />
     </Routes>
   );

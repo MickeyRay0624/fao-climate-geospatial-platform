@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import csv
+import io
+import re
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
-from pydantic import BaseModel
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
 from redis import Redis
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.audit_service import record_event
@@ -15,13 +23,21 @@ from app.config import (
     ALLOW_INSECURE_DEV_FILE_SCAN,
     APP_ENV,
     AUTH_MODE,
+    BACKUP_EVIDENCE_PATH,
+    MINIO_BUCKET,
     REDIS_URL,
 )
 from app.database import get_session
 from app.errors import conflict, not_found
 from app.identity import Principal, get_current_principal
-from app.extension_models import ExtensionCase, FollowUp, KnowledgeItem
+from app.extension_models import (
+    ExtensionCase,
+    FollowUp,
+    KnowledgeItem,
+    KnowledgeVersion,
+)
 from app.jobs import celery_app, process_upload_session
+from app.object_store import object_client
 from app.platform_models import (
     AuditEvent,
     CatalogDataset,
@@ -29,16 +45,22 @@ from app.platform_models import (
     Collection,
     Group,
     GroupMembership,
+    IdempotencyRecord,
     JobStep,
     InvestmentAnalysisRun,
     InvestmentAnalysisInputSet,
     Module,
+    Permission,
+    PermissionGrant,
     ProcessingJob,
     QualityIssue,
+    QualityProfile,
     QualityRun,
+    ReviewDecision,
     ReviewRequest,
     Role,
     RoleAssignment,
+    RolePermission,
     User,
     WorkspaceMembership,
     WorkspaceModule,
@@ -49,6 +71,88 @@ core_router = APIRouter(tags=["Core"])
 jobs_router = APIRouter(prefix="/api/jobs/v1", tags=["Jobs"])
 audit_router = APIRouter(prefix="/api/audit/v1", tags=["Audit"])
 governance_router = APIRouter(prefix="/api/governance/v1", tags=["Governance"])
+
+
+def require_governance_idempotency_key(
+    value: str | None = Header(default=None, alias="Idempotency-Key"),
+) -> str:
+    if not value or len(value) < 8:
+        from app.errors import PlatformError
+
+        raise PlatformError(
+            "IDEMPOTENCY_KEY_REQUIRED",
+            "Mutating governance requests require an Idempotency-Key of at least 8 characters.",
+            400,
+        )
+    return value[:255]
+
+
+def _governance_cached(
+    session: Session,
+    principal: Principal,
+    key: str,
+    request: Request,
+) -> dict[str, Any] | None:
+    row = session.scalar(
+        select(IdempotencyRecord).where(
+            IdempotencyRecord.actor_id == principal.user_id,
+            IdempotencyRecord.idempotency_key == key,
+            IdempotencyRecord.method == request.method,
+            IdempotencyRecord.path == request.url.path,
+        )
+    )
+    return row.response_json if row else None
+
+
+def _remember_governance_response(
+    session: Session,
+    principal: Principal,
+    key: str,
+    request: Request,
+    payload: dict[str, Any],
+    status: int = 200,
+) -> None:
+    session.add(
+        IdempotencyRecord(
+            actor_id=principal.user_id,
+            idempotency_key=key,
+            method=request.method,
+            path=request.url.path,
+            response_status=status,
+            response_json=payload,
+        )
+    )
+
+
+def _assert_any_permission(principal: Principal, *codes: str) -> None:
+    if not set(codes) & principal.effective_permissions:
+        assert_permission(principal, codes[0])
+
+
+def _slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "group"
+
+
+class CreateGroupRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=240)
+    slug: str | None = Field(default=None, min_length=2, max_length=120)
+    description: str = Field(default="", max_length=1000)
+    reason: str = Field(min_length=8, max_length=1000)
+
+
+class GroupMemberRequest(BaseModel):
+    user_id: UUID
+    reason: str = Field(min_length=8, max_length=1000)
+
+
+class GovernanceReasonRequest(BaseModel):
+    reason: str = Field(min_length=8, max_length=1000)
+
+
+class RoleAssignmentRequest(BaseModel):
+    subject_id: UUID
+    valid_until: datetime | None = None
+    reason: str = Field(min_length=8, max_length=1000)
 
 
 def _user(user: User) -> dict[str, Any]:
@@ -114,7 +218,14 @@ def _navigation(principal: Principal, session: Session) -> list[dict[str, Any]]:
         {"path": "/governance/members", "title": "Members", "section": "Governance", "permission": "workspace.manage_members", "icon": "users"},
         {"path": "/governance/groups", "title": "Groups", "section": "Governance", "permission": "workspace.manage_groups", "icon": "groups"},
         {"path": "/governance/roles", "title": "Roles", "section": "Governance", "permission": "workspace.manage_roles", "icon": "shield"},
+        {"path": "/governance/reviews", "title": "Review queues", "section": "Governance", "permission": "dataset.review", "icon": "check"},
+        {"path": "/governance/data-policies", "title": "Data policies", "section": "Governance", "permission": "workspace.manage_settings", "icon": "policy"},
+        {"path": "/governance/quality-profiles", "title": "Quality profiles", "section": "Governance", "permission": "quality.manage_profiles", "icon": "quality"},
+        {"path": "/governance/knowledge-approvals", "title": "Knowledge approvals", "section": "Governance", "permission": "extension.knowledge.approve", "icon": "knowledge"},
+        {"path": "/governance/applications", "title": "Application controls", "section": "Governance", "permission": "workspace.enable_modules", "icon": "apps"},
         {"path": "/governance/audit", "title": "Audit log", "section": "Governance", "permission": "audit.view", "icon": "audit"},
+        {"path": "/governance/retention", "title": "Retention", "section": "Governance", "permission": "workspace.manage_settings", "icon": "archive"},
+        {"path": "/governance/system-health", "title": "System health", "section": "Governance", "permission": "system.health.view", "icon": "health"},
         {"path": "/help", "title": "Help & boundaries", "section": "Support", "permission": "workspace.view", "icon": "help"},
     ]
     return [
@@ -767,6 +878,9 @@ def list_audit_events(
     resource_type: str | None = None,
     resource_id: str | None = None,
     correlation_id: str | None = None,
+    actor_id: UUID | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
     search: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
@@ -785,6 +899,12 @@ def list_audit_events(
         query = query.where(AuditEvent.resource_id == resource_id)
     if correlation_id:
         query = query.where(AuditEvent.correlation_id == correlation_id)
+    if actor_id:
+        query = query.where(AuditEvent.actor_id == actor_id)
+    if date_from:
+        query = query.where(AuditEvent.event_time >= date_from)
+    if date_to:
+        query = query.where(AuditEvent.event_time <= date_to)
     if search:
         term = f"%{search}%"
         query = query.where(or_(AuditEvent.action.ilike(term), AuditEvent.resource_id.ilike(term), AuditEvent.reason.ilike(term)))
@@ -807,27 +927,166 @@ def list_audit_events(
     }
 
 
+@audit_router.get("/events/export")
+def export_audit_events(
+    action: str | None = None,
+    outcome: str | None = None,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    correlation_id: str | None = None,
+    actor_id: UUID | None = None,
+    date_from: datetime | None = None,
+    date_to: datetime | None = None,
+    search: str | None = None,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> Response:
+    assert_permission(principal, "audit.export")
+    query = select(AuditEvent).where(
+        AuditEvent.workspace_id == principal.active_workspace_id
+    )
+    filters = {
+        "action": (AuditEvent.action, action),
+        "outcome": (AuditEvent.outcome, outcome),
+        "resource_type": (AuditEvent.resource_type, resource_type),
+        "resource_id": (AuditEvent.resource_id, resource_id),
+        "correlation_id": (AuditEvent.correlation_id, correlation_id),
+        "actor_id": (AuditEvent.actor_id, actor_id),
+    }
+    for column, value in filters.values():
+        if value is not None:
+            query = query.where(column == value)
+    if date_from:
+        query = query.where(AuditEvent.event_time >= date_from)
+    if date_to:
+        query = query.where(AuditEvent.event_time <= date_to)
+    if search:
+        term = f"%{search}%"
+        query = query.where(
+            or_(
+                AuditEvent.action.ilike(term),
+                AuditEvent.resource_id.ilike(term),
+                AuditEvent.reason.ilike(term),
+            )
+        )
+    rows = session.scalars(
+        query.order_by(AuditEvent.event_time.desc()).limit(10_000)
+    ).all()
+    stream = io.StringIO()
+    writer = csv.writer(stream)
+    writer.writerow(
+        [
+            "event_time",
+            "actor_id",
+            "action",
+            "resource_type",
+            "resource_id",
+            "outcome",
+            "reason",
+            "correlation_id",
+            "severity",
+        ]
+    )
+    for event in rows:
+        writer.writerow(
+            [
+                event.event_time.isoformat(),
+                str(event.actor_id) if event.actor_id else "system",
+                event.action,
+                event.resource_type,
+                event.resource_id,
+                event.outcome,
+                event.reason or "",
+                event.correlation_id,
+                event.severity,
+            ]
+        )
+    return Response(
+        content=stream.getvalue(),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=workspace-audit-events.csv",
+            "X-Export-Limit": "10000",
+        },
+    )
+
+
 @governance_router.get("/members")
-def list_members(principal: Principal = Depends(get_current_principal), session: Session = Depends(get_session)) -> dict[str, Any]:
+def list_members(
+    search: str | None = None,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
     assert_permission(principal, "workspace.manage_members")
-    rows = session.execute(
+    query = (
         select(User, WorkspaceMembership)
         .join(WorkspaceMembership, WorkspaceMembership.user_id == User.id)
         .where(WorkspaceMembership.workspace_id == principal.active_workspace_id)
-        .order_by(User.display_name)
-    ).all()
+    )
+    if search:
+        term = f"%{search}%"
+        query = query.where(
+            or_(
+                User.display_name.ilike(term),
+                User.external_subject.ilike(term),
+                User.email.ilike(term),
+            )
+        )
+    rows = session.execute(query.order_by(User.display_name)).all()
+    items = []
+    for user, membership in rows:
+        denies = session.scalars(
+            select(PermissionGrant).where(
+                PermissionGrant.workspace_id == principal.active_workspace_id,
+                PermissionGrant.subject_type == "user",
+                PermissionGrant.subject_id == user.id,
+                PermissionGrant.effect == "DENY",
+            )
+        ).all()
+        items.append(
+            {
+                **_user(user),
+                "membership_status": membership.status,
+                "joined_at": membership.joined_at.isoformat(),
+                "expires_at": (
+                    membership.expires_at.isoformat()
+                    if membership.expires_at
+                    else None
+                ),
+                "explicit_denies": [
+                    {
+                        "permission_code": grant.permission_code,
+                        "resource_type": grant.resource_type,
+                        "resource_id": str(grant.resource_id),
+                        "expires_at": (
+                            grant.expires_at.isoformat() if grant.expires_at else None
+                        ),
+                        "reason": grant.reason,
+                    }
+                    for grant in denies
+                ],
+            }
+        )
     return {
-        "items": [
-            {**_user(user), "membership_status": membership.status, "joined_at": membership.joined_at.isoformat(), "expires_at": membership.expires_at.isoformat() if membership.expires_at else None}
-            for user, membership in rows
-        ]
+        "items": items,
+        "meta": {"total": len(items), "password_management": "external_identity_only"},
     }
 
 
 @governance_router.get("/groups")
-def list_groups(principal: Principal = Depends(get_current_principal), session: Session = Depends(get_session)) -> dict[str, Any]:
+def list_groups(
+    search: str | None = None,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
     assert_permission(principal, "workspace.manage_groups")
-    groups = session.scalars(select(Group).where(Group.workspace_id == principal.active_workspace_id).order_by(Group.name)).all()
+    query = select(Group).where(Group.workspace_id == principal.active_workspace_id)
+    if search:
+        term = f"%{search}%"
+        query = query.where(
+            or_(Group.name.ilike(term), Group.slug.ilike(term), Group.description.ilike(term))
+        )
+    groups = session.scalars(query.order_by(Group.name)).all()
     return {
         "items": [
             {
@@ -848,9 +1107,19 @@ def list_groups(principal: Principal = Depends(get_current_principal), session: 
 
 
 @governance_router.get("/roles")
-def list_roles(principal: Principal = Depends(get_current_principal), session: Session = Depends(get_session)) -> dict[str, Any]:
+def list_roles(
+    search: str | None = None,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
     assert_permission(principal, "workspace.manage_roles")
-    roles = session.scalars(select(Role).where(Role.workspace_id == principal.active_workspace_id).order_by(Role.name)).all()
+    query = select(Role).where(Role.workspace_id == principal.active_workspace_id)
+    if search:
+        term = f"%{search}%"
+        query = query.where(
+            or_(Role.name.ilike(term), Role.role_key.ilike(term), Role.description.ilike(term))
+        )
+    roles = session.scalars(query.order_by(Role.name)).all()
     items = []
     for role in roles:
         assignments = session.execute(
@@ -858,10 +1127,17 @@ def list_roles(principal: Principal = Depends(get_current_principal), session: S
             .join(User, User.id == RoleAssignment.subject_id)
             .where(RoleAssignment.role_id == role.id, RoleAssignment.subject_type == "user", RoleAssignment.scope_id == principal.active_workspace_id)
         ).all()
+        permissions = session.scalars(
+            select(Permission.code)
+            .join(RolePermission, RolePermission.permission_id == Permission.id)
+            .where(RolePermission.role_id == role.id)
+            .order_by(Permission.code)
+        ).all()
         items.append(
             {
                 "id": str(role.id), "role_key": role.role_key, "name": role.name,
                 "description": role.description,
+                "permissions": list(permissions),
                 "assignments": [
                     {"id": str(assignment.id), "subject": _user(user), "valid_until": assignment.valid_until.isoformat() if assignment.valid_until else None, "reason": assignment.reason}
                     for assignment, user in assignments
@@ -869,6 +1145,685 @@ def list_roles(principal: Principal = Depends(get_current_principal), session: S
             }
         )
     return {"items": items}
+
+
+def _group_payload(session: Session, group: Group) -> dict[str, Any]:
+    members = session.scalars(
+        select(User)
+        .join(GroupMembership, GroupMembership.user_id == User.id)
+        .where(GroupMembership.group_id == group.id)
+        .order_by(User.display_name)
+    ).all()
+    return {
+        "id": str(group.id),
+        "slug": group.slug,
+        "name": group.name,
+        "description": group.description,
+        "members": [_user(user) for user in members],
+    }
+
+
+@governance_router.post("/groups", status_code=201)
+def create_group(
+    body: CreateGroupRequest,
+    request: Request,
+    key: str = Depends(require_governance_idempotency_key),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "workspace.manage_groups")
+    cached = _governance_cached(session, principal, key, request)
+    if cached:
+        return cached
+    slug = _slug(body.slug or body.name)
+    if session.scalar(
+        select(Group.id).where(
+            Group.workspace_id == principal.active_workspace_id,
+            Group.slug == slug,
+        )
+    ):
+        raise conflict("GROUP_SLUG_EXISTS", "A group with this slug already exists.")
+    group = Group(
+        workspace_id=principal.active_workspace_id,
+        slug=slug,
+        name=body.name.strip(),
+        description=body.description.strip(),
+    )
+    session.add(group)
+    session.flush()
+    payload = _group_payload(session, group)
+    record_event(
+        session,
+        action="governance.group.create",
+        resource_type="group",
+        resource_id=group.id,
+        outcome="success",
+        correlation_id=request.state.correlation_id,
+        actor_id=principal.user_id,
+        workspace_id=principal.active_workspace_id,
+        reason=body.reason,
+        after={"slug": slug, "name": group.name},
+    )
+    _remember_governance_response(session, principal, key, request, payload, 201)
+    session.commit()
+    return payload
+
+
+@governance_router.post("/groups/{group_id}/members")
+def add_group_member(
+    group_id: UUID,
+    body: GroupMemberRequest,
+    request: Request,
+    key: str = Depends(require_governance_idempotency_key),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "workspace.manage_groups")
+    cached = _governance_cached(session, principal, key, request)
+    if cached:
+        return cached
+    group = session.get(Group, group_id)
+    membership = session.scalar(
+        select(WorkspaceMembership).where(
+            WorkspaceMembership.workspace_id == principal.active_workspace_id,
+            WorkspaceMembership.user_id == body.user_id,
+            WorkspaceMembership.status == "active",
+        )
+    )
+    user = session.get(User, body.user_id)
+    if group is None or group.workspace_id != principal.active_workspace_id:
+        raise not_found("Group")
+    if membership is None or user is None:
+        raise not_found("Workspace member")
+    exists = session.scalar(
+        select(GroupMembership).where(
+            GroupMembership.group_id == group.id,
+            GroupMembership.user_id == user.id,
+        )
+    )
+    if exists is None:
+        session.add(GroupMembership(group_id=group.id, user_id=user.id))
+        session.flush()
+    payload = _group_payload(session, group)
+    record_event(
+        session,
+        action="governance.group.member.add",
+        resource_type="group",
+        resource_id=group.id,
+        outcome="success",
+        correlation_id=request.state.correlation_id,
+        actor_id=principal.user_id,
+        workspace_id=principal.active_workspace_id,
+        reason=body.reason,
+        after={"user_id": str(user.id)},
+    )
+    _remember_governance_response(session, principal, key, request, payload)
+    session.commit()
+    return payload
+
+
+@governance_router.post("/groups/{group_id}/members/{user_id}/remove")
+def remove_group_member(
+    group_id: UUID,
+    user_id: UUID,
+    body: GovernanceReasonRequest,
+    request: Request,
+    key: str = Depends(require_governance_idempotency_key),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "workspace.manage_groups")
+    cached = _governance_cached(session, principal, key, request)
+    if cached:
+        return cached
+    group = session.get(Group, group_id)
+    if group is None or group.workspace_id != principal.active_workspace_id:
+        raise not_found("Group")
+    membership = session.scalar(
+        select(GroupMembership).where(
+            GroupMembership.group_id == group.id,
+            GroupMembership.user_id == user_id,
+        )
+    )
+    if membership is None:
+        raise not_found("Group membership")
+    session.delete(membership)
+    session.flush()
+    payload = _group_payload(session, group)
+    record_event(
+        session,
+        action="governance.group.member.remove",
+        resource_type="group",
+        resource_id=group.id,
+        outcome="success",
+        correlation_id=request.state.correlation_id,
+        actor_id=principal.user_id,
+        workspace_id=principal.active_workspace_id,
+        reason=body.reason,
+        before={"user_id": str(user_id)},
+    )
+    _remember_governance_response(session, principal, key, request, payload)
+    session.commit()
+    return payload
+
+
+@governance_router.post("/roles/{role_id}/assignments", status_code=201)
+def create_role_assignment(
+    role_id: UUID,
+    body: RoleAssignmentRequest,
+    request: Request,
+    key: str = Depends(require_governance_idempotency_key),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "workspace.manage_roles")
+    cached = _governance_cached(session, principal, key, request)
+    if cached:
+        return cached
+    if body.valid_until and (
+        body.valid_until.tzinfo is None
+        or body.valid_until <= datetime.now(timezone.utc)
+    ):
+        raise conflict(
+            "ROLE_ASSIGNMENT_EXPIRY_INVALID",
+            "A role assignment expiry must be timezone-aware and in the future.",
+        )
+    role = session.get(Role, role_id)
+    user = session.get(User, body.subject_id)
+    membership = session.scalar(
+        select(WorkspaceMembership).where(
+            WorkspaceMembership.workspace_id == principal.active_workspace_id,
+            WorkspaceMembership.user_id == body.subject_id,
+            WorkspaceMembership.status == "active",
+        )
+    )
+    if role is None or role.workspace_id != principal.active_workspace_id:
+        raise not_found("Role")
+    if user is None or membership is None:
+        raise not_found("Workspace member")
+    existing = session.scalar(
+        select(RoleAssignment).where(
+            RoleAssignment.role_id == role.id,
+            RoleAssignment.subject_type == "user",
+            RoleAssignment.subject_id == user.id,
+            RoleAssignment.scope_id == principal.active_workspace_id,
+            or_(
+                RoleAssignment.valid_until.is_(None),
+                RoleAssignment.valid_until > datetime.now(timezone.utc),
+            ),
+        )
+    )
+    if existing:
+        raise conflict(
+            "ROLE_ASSIGNMENT_EXISTS",
+            "This member already has an active assignment for the selected role.",
+        )
+    assignment = RoleAssignment(
+        subject_type="user",
+        subject_id=user.id,
+        role_id=role.id,
+        scope_type="workspace",
+        scope_id=principal.active_workspace_id,
+        valid_until=body.valid_until,
+        assigned_by=principal.user_id,
+        reason=body.reason,
+    )
+    session.add(assignment)
+    session.flush()
+    payload = {
+        "id": str(assignment.id),
+        "role_id": str(role.id),
+        "role_key": role.role_key,
+        "subject": _user(user),
+        "valid_until": (
+            assignment.valid_until.isoformat() if assignment.valid_until else None
+        ),
+        "reason": assignment.reason,
+    }
+    record_event(
+        session,
+        action="governance.role.assignment.create",
+        resource_type="role_assignment",
+        resource_id=assignment.id,
+        outcome="success",
+        correlation_id=request.state.correlation_id,
+        actor_id=principal.user_id,
+        workspace_id=principal.active_workspace_id,
+        reason=body.reason,
+        after={
+            "role_key": role.role_key,
+            "subject_id": str(user.id),
+            "valid_until": payload["valid_until"],
+        },
+    )
+    _remember_governance_response(session, principal, key, request, payload, 201)
+    session.commit()
+    return payload
+
+
+@governance_router.get("/reviews")
+def governance_review_queues(
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    _assert_any_permission(
+        principal,
+        "dataset.review",
+        "extension.knowledge.approve",
+        "workspace.manage_settings",
+    )
+    dataset_rows = session.execute(
+        select(ReviewRequest, CatalogDatasetVersion, CatalogDataset)
+        .join(
+            CatalogDatasetVersion,
+            CatalogDatasetVersion.id == ReviewRequest.dataset_version_id,
+        )
+        .join(CatalogDataset, CatalogDataset.id == CatalogDatasetVersion.dataset_id)
+        .where(CatalogDataset.workspace_id == principal.active_workspace_id)
+        .order_by(ReviewRequest.requested_at.desc())
+    ).all()
+    datasets = []
+    for review, version, dataset in dataset_rows:
+        quality = session.scalar(
+            select(QualityRun)
+            .where(QualityRun.dataset_version_id == version.id)
+            .order_by(QualityRun.completed_at.desc().nullslast())
+            .limit(1)
+        )
+        decision = session.scalar(
+            select(ReviewDecision)
+            .where(ReviewDecision.review_request_id == review.id)
+            .order_by(ReviewDecision.decided_at.desc())
+            .limit(1)
+        )
+        datasets.append(
+            {
+                "id": str(review.id),
+                "type": "dataset",
+                "status": review.status,
+                "title": dataset.title,
+                "version": version.version_label,
+                "requested_by": str(review.requested_by),
+                "assigned_group_id": (
+                    str(review.reviewer_group_id)
+                    if review.reviewer_group_id
+                    else None
+                ),
+                "quality_summary": quality.summary_json if quality else {},
+                "quality_status": quality.status if quality else "NOT_RUN",
+                "decision": decision.decision if decision else None,
+                "rationale": decision.rationale if decision else None,
+                "separation_rule": "requester_cannot_decide",
+                "path": f"/data/versions/{version.id}",
+            }
+        )
+    knowledge_rows = session.execute(
+        select(KnowledgeVersion, KnowledgeItem)
+        .join(KnowledgeItem, KnowledgeItem.id == KnowledgeVersion.knowledge_item_id)
+        .where(
+            KnowledgeVersion.workspace_id == principal.active_workspace_id,
+            KnowledgeVersion.status.in_(["DRAFT", "UNDER_REVIEW"]),
+        )
+        .order_by(KnowledgeVersion.created_at.desc())
+    ).all()
+    knowledge = [
+        {
+            "id": str(version.id),
+            "type": "knowledge",
+            "status": version.status,
+            "title": item.title,
+            "version": str(version.version_number),
+            "requested_by": str(version.created_by),
+            "assigned_group_id": None,
+            "quality_summary": {
+                "source_metadata": bool(version.source_summary),
+                "demonstration": item.demonstration,
+            },
+            "quality_status": "DEMO_CONTENT_REVIEW",
+            "decision": "APPROVED" if version.approved_by else None,
+            "rationale": None,
+            "separation_rule": "creator_cannot_approve",
+            "path": "/apps/extension-field-support/knowledge",
+        }
+        for version, item in knowledge_rows
+    ]
+    return {
+        "queues": {"dataset": datasets, "knowledge": knowledge},
+        "meta": {
+            "dataset_total": len(datasets),
+            "knowledge_total": len(knowledge),
+            "typed_queues": True,
+        },
+    }
+
+
+@governance_router.get("/data-policies")
+def governance_data_policies(
+    principal: Principal = Depends(get_current_principal),
+) -> dict[str, Any]:
+    assert_permission(principal, "workspace.manage_settings")
+    return {
+        "default_workspace_policy": {
+            "visibility": "WORKSPACE",
+            "classification": "FAO_INTERNAL",
+            "licence_required_before_publication": True,
+            "sensitive_field_requires_explicit_grant": True,
+        },
+        "visibility_definitions": [
+            {"key": "PRIVATE", "meaning": "Owner and explicit grants only."},
+            {"key": "TEAM", "meaning": "Authorised workspace groups."},
+            {"key": "WORKSPACE", "meaning": "Active workspace members, subject to classification."},
+            {"key": "PUBLIC", "meaning": "Only approved non-sensitive published evidence."},
+        ],
+        "classification_definitions": [
+            {"key": "PUBLIC", "meaning": "Approved for public disclosure."},
+            {"key": "FAO_INTERNAL", "meaning": "Internal workspace evidence."},
+            {"key": "RESTRICTED", "meaning": "Explicit scoped access."},
+            {"key": "SENSITIVE_FIELD", "meaning": "Field location or media; explicit grants required."},
+        ],
+        "blocked_combinations": [
+            {
+                "visibility": "PUBLIC",
+                "classification": "SENSITIVE_FIELD",
+                "reason": "Sensitive field evidence cannot be public.",
+            },
+            {
+                "visibility": "PUBLIC",
+                "classification": "RESTRICTED",
+                "reason": "Restricted evidence cannot be public.",
+            },
+        ],
+        "mode": "read_only",
+    }
+
+
+@governance_router.get("/quality-profiles")
+def governance_quality_profiles(
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "quality.manage_profiles")
+    profiles = session.scalars(
+        select(QualityProfile).order_by(
+            QualityProfile.profile_key, QualityProfile.profile_version
+        )
+    ).all()
+    items = []
+    for profile in profiles:
+        recent = session.scalars(
+            select(QualityRun)
+            .where(QualityRun.quality_profile_id == profile.id)
+            .order_by(QualityRun.started_at.desc().nullslast())
+            .limit(5)
+        ).all()
+        items.append(
+            {
+                "id": str(profile.id),
+                "profile_key": profile.profile_key,
+                "profile_version": profile.profile_version,
+                "data_kind": profile.data_kind,
+                "rules": profile.rules_json,
+                "status": "ACTIVE" if profile.active else "RETIRED",
+                "recent_runs": [
+                    {
+                        "id": str(run.id),
+                        "dataset_version_id": str(run.dataset_version_id),
+                        "status": run.status,
+                        "summary": run.summary_json,
+                    }
+                    for run in recent
+                ],
+            }
+        )
+    return {"items": items, "meta": {"total": len(items), "mode": "read_only"}}
+
+
+@governance_router.get("/knowledge-approvals")
+def governance_knowledge_approvals(
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "extension.knowledge.approve")
+    rows = session.execute(
+        select(KnowledgeVersion, KnowledgeItem, User)
+        .join(KnowledgeItem, KnowledgeItem.id == KnowledgeVersion.knowledge_item_id)
+        .join(User, User.id == KnowledgeVersion.created_by)
+        .where(
+            KnowledgeVersion.workspace_id == principal.active_workspace_id,
+            KnowledgeVersion.status.in_(["DRAFT", "UNDER_REVIEW"]),
+        )
+        .order_by(KnowledgeVersion.created_at.desc())
+    ).all()
+    return {
+        "items": [
+            {
+                "id": str(version.id),
+                "knowledge_item_id": str(item.id),
+                "title": item.title,
+                "version_number": version.version_number,
+                "status": version.status,
+                "creator": _user(creator),
+                "source_summary": version.source_summary,
+                "row_version": version.row_version,
+                "creator_can_approve": creator.id != principal.user_id,
+                "path": "/apps/extension-field-support/knowledge",
+            }
+            for version, item, creator in rows
+        ],
+        "warning": (
+            "Demonstration knowledge workflow only; approval does not assert external "
+            "endorsement or operational agronomic authority."
+        ),
+    }
+
+
+@governance_router.get("/applications")
+def governance_applications(
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "workspace.enable_modules")
+    installed = modules(principal=principal, session=session)["items"]
+    by_id = {
+        str(module.id): module
+        for module in session.scalars(select(Module).order_by(Module.name)).all()
+    }
+    for item in installed:
+        manifest = by_id[item["id"]].manifest
+        item["technical_owner"] = manifest.get("ownership", {}).get(
+            "technical_owner"
+        )
+        item["declared_permissions"] = [
+            value.get("code")
+            for value in manifest.get("permissions", {}).get("declared", [])
+        ]
+        item["contract_status"] = (
+            "VALID" if item["manifest_valid"] else "INVALID"
+        )
+    return {
+        "items": installed,
+        "planned": [
+            {"module_key": "monitoring-and-alerts", "enabled": False},
+            {"module_key": "adaptation-portfolio", "enabled": False},
+        ],
+    }
+
+
+@governance_router.get("/retention")
+def governance_retention(
+    principal: Principal = Depends(get_current_principal),
+) -> dict[str, Any]:
+    assert_permission(principal, "workspace.manage_settings")
+    return {
+        "policies": [
+            {
+                "scope": "published_dataset_versions",
+                "current_policy": "Immutable while published or referenced; archive by governed decision.",
+                "automatic_purge": False,
+            },
+            {
+                "scope": "audit_events",
+                "current_policy": "Append-only application evidence; no update or delete endpoint.",
+                "automatic_purge": False,
+            },
+            {
+                "scope": "extension_cases_and_media",
+                "current_policy": "Close or cancel records; physical deletion requires approved country and programme policy.",
+                "automatic_purge": False,
+            },
+            {
+                "scope": "processing_quarantine",
+                "current_policy": "Manual local cleanup only pending an approved operational schedule.",
+                "automatic_purge": False,
+            },
+        ],
+        "gaps": [
+            "Country and programme retention periods are not approved.",
+            "Legal-hold workflow and restore authorisation are not automated.",
+            "Object-store lifecycle rules and off-host retention are not configured.",
+        ],
+        "guidance": {
+            "archive": "Use governed archive/close actions; do not delete published or completed evidence.",
+            "restore": "Follow the backup and restore runbook and reconcile database and object inventory together.",
+        },
+    }
+
+
+def _latest_backup_evidence() -> dict[str, Any]:
+    if not BACKUP_EVIDENCE_PATH:
+        return {
+            "status": "NOT_CONFIGURED",
+            "created_at": None,
+            "database_dump": False,
+            "checksum_evidence": False,
+            "off_host": False,
+        }
+    root = Path(BACKUP_EVIDENCE_PATH)
+    try:
+        candidates = [
+            path
+            for path in root.iterdir()
+            if path.is_dir() and (path / "postgres.dump").is_file()
+        ]
+    except (FileNotFoundError, PermissionError, OSError):
+        candidates = []
+    if not candidates:
+        return {
+            "status": "NOT_AVAILABLE",
+            "created_at": None,
+            "database_dump": False,
+            "checksum_evidence": False,
+            "off_host": False,
+        }
+    latest = max(candidates, key=lambda path: path.stat().st_mtime)
+    checksum = latest / "postgres.dump.sha256"
+    return {
+        "status": "LOCAL_EVIDENCE_PRESENT",
+        "created_at": datetime.fromtimestamp(
+            latest.stat().st_mtime, tz=timezone.utc
+        ).isoformat(),
+        "database_dump": True,
+        "checksum_evidence": checksum.is_file(),
+        "baseline_evidence": (latest / "baseline.json").is_file(),
+        "object_inventory_evidence": any(latest.glob("*minio*inventory*.json")),
+        "off_host": False,
+    }
+
+
+@governance_router.get("/system-health")
+def governance_system_health(
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "system.health.view")
+    services: dict[str, dict[str, Any]] = {}
+    try:
+        session.execute(text("SELECT 1"))
+        services["database"] = {"status": "OK"}
+    except Exception:
+        services["database"] = {"status": "UNAVAILABLE"}
+    try:
+        available = object_client().bucket_exists(MINIO_BUCKET)
+        services["object_storage"] = {
+            "status": "OK" if available else "UNAVAILABLE",
+            "bucket_configured": available,
+        }
+    except Exception:
+        services["object_storage"] = {
+            "status": "UNAVAILABLE",
+            "bucket_configured": False,
+        }
+    redis_status = "UNAVAILABLE"
+    queue_depth = None
+    try:
+        redis_client = Redis.from_url(REDIS_URL, socket_timeout=0.75)
+        redis_client.ping()
+        redis_status = "OK"
+        queue_depth = sum(
+            int(redis_client.llen(queue))
+            for queue in ("celery", "geospatial-analysis", "extension-sync")
+        )
+    except Exception:
+        pass
+    services["redis"] = {"status": redis_status}
+    try:
+        worker_ping = celery_app.control.inspect(timeout=0.75).ping() or {}
+        services["worker"] = {
+            "status": "OK" if worker_ping else "UNAVAILABLE",
+            "responding_workers": len(worker_ping),
+        }
+    except Exception:
+        services["worker"] = {"status": "UNAVAILABLE", "responding_workers": 0}
+    try:
+        current_head = session.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar_one()
+        api_root = Path(__file__).resolve().parents[1]
+        alembic_config = Config(str(api_root / "alembic.ini"))
+        alembic_config.set_main_option(
+            "script_location", str(api_root / "alembic")
+        )
+        expected_head = ScriptDirectory.from_config(alembic_config).get_current_head()
+        services["migrations"] = {
+            "status": "OK" if current_head == expected_head else "OUT_OF_DATE",
+            "current": current_head,
+            "expected": expected_head,
+        }
+    except Exception:
+        services["migrations"] = {
+            "status": "UNAVAILABLE",
+            "current": None,
+            "expected": None,
+        }
+    scanner_mode = (
+        "DEVELOPMENT_BYPASS"
+        if APP_ENV in {"development", "test"} and ALLOW_INSECURE_DEV_FILE_SCAN
+        else "FAIL_CLOSED_PENDING_OPERATIONAL_SCANNER"
+    )
+    services["scanner"] = {
+        "status": "WARNING" if scanner_mode == "DEVELOPMENT_BYPASS" else "REQUIRED",
+        "mode": scanner_mode,
+        "approved_production_scanner": False,
+    }
+    return {
+        "status": (
+            "OK"
+            if all(
+                services[name]["status"] == "OK"
+                for name in ("database", "object_storage", "redis", "worker", "migrations")
+            )
+            else "DEGRADED"
+        ),
+        "services": services,
+        "queue_depth": queue_depth,
+        "latest_backup_evidence": _latest_backup_evidence(),
+        "environment": {
+            "name": APP_ENV,
+            "authentication": AUTH_MODE,
+            "development_identity": AUTH_MODE == "dev",
+        },
+        "secrets_exposed": False,
+    }
 
 
 def dependency_health() -> dict[str, Any]:

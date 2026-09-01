@@ -229,9 +229,76 @@ export type ReviewList = { items: Array<{ id: string; review_type: string; statu
 
 export type AuditList = { items: Array<{ id: string; event_time: string; actor_id: string | null; action: string; resource_type: string; resource_id: string; outcome: string; reason: string | null; correlation_id: string; before: Record<string, unknown>; after: Record<string, unknown>; severity: string }>; meta: { total: number } };
 
-export type GovernanceMembers = { items: Array<Principal & { membership_status: string; joined_at: string; expires_at: string | null }> };
+export type GovernanceMembers = {
+  items: Array<Principal & {
+    membership_status: string;
+    joined_at: string;
+    expires_at: string | null;
+    explicit_denies: Array<{ permission_code: string; resource_type: string; resource_id: string; expires_at: string | null; reason: string }>;
+  }>;
+  meta?: { total: number; password_management: string };
+};
 export type GovernanceGroups = { items: Array<{ id: string; slug: string; name: string; description: string; members: Principal[] }> };
-export type GovernanceRoles = { items: Array<{ id: string; role_key: string; name: string; description: string; assignments: Array<{ id: string; subject: Principal; valid_until: string | null; reason: string }> }> };
+export type GovernanceRoles = { items: Array<{ id: string; role_key: string; name: string; description: string; permissions: string[]; assignments: Array<{ id: string; subject: Principal; valid_until: string | null; reason: string }> }> };
+
+export type GovernanceReviewItem = {
+  id: string;
+  type: "dataset" | "knowledge";
+  status: string;
+  title: string;
+  version: string;
+  requested_by: string;
+  assigned_group_id: string | null;
+  quality_summary: Record<string, unknown>;
+  quality_status: string;
+  decision: string | null;
+  rationale: string | null;
+  separation_rule: string;
+  path: string;
+};
+
+export type GovernanceReviews = {
+  queues: { dataset: GovernanceReviewItem[]; knowledge: GovernanceReviewItem[] };
+  meta: { dataset_total: number; knowledge_total: number; typed_queues: boolean };
+};
+
+export type GovernanceDataPolicies = {
+  default_workspace_policy: Record<string, string | boolean>;
+  visibility_definitions: Array<{ key: string; meaning: string }>;
+  classification_definitions: Array<{ key: string; meaning: string }>;
+  blocked_combinations: Array<{ visibility: string; classification: string; reason: string }>;
+  mode: string;
+};
+
+export type GovernanceQualityProfiles = {
+  items: Array<{ id: string; profile_key: string; profile_version: string; data_kind: string; rules: Record<string, unknown>; status: string; recent_runs: Array<{ id: string; dataset_version_id: string; status: string; summary: Record<string, unknown> }> }>;
+  meta: { total: number; mode: string };
+};
+
+export type GovernanceKnowledgeApprovals = {
+  items: Array<{ id: string; knowledge_item_id: string; title: string; version_number: number; status: string; creator: Principal; source_summary: string; row_version: number; creator_can_approve: boolean; path: string }>;
+  warning: string;
+};
+
+export type GovernanceApplications = {
+  items: Array<{ id: string; module_key: string; name: string; description: string; module_version: string; contract_version: string; status: string; enabled: boolean; manifest_valid: boolean; feature_flags: Record<string, boolean>; owner: string; technical_owner: string; declared_permissions: string[]; contract_status: string }>;
+  planned: Array<{ module_key: string; enabled: boolean }>;
+};
+
+export type GovernanceRetention = {
+  policies: Array<{ scope: string; current_policy: string; automatic_purge: boolean }>;
+  gaps: string[];
+  guidance: { archive: string; restore: string };
+};
+
+export type GovernanceSystemHealth = {
+  status: string;
+  services: Record<string, { status: string; [key: string]: unknown }>;
+  queue_depth: number | null;
+  latest_backup_evidence: { status: string; created_at: string | null; database_dump: boolean; checksum_evidence: boolean; off_host: boolean; [key: string]: unknown };
+  environment: { name: string; authentication: string; development_identity: boolean };
+  secrets_exposed: boolean;
+};
 
 export type ExtensionCaseSummary = {
   id: string;

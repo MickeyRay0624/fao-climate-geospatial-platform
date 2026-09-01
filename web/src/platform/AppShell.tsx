@@ -30,6 +30,12 @@ const iconGlyph: Record<string, string> = {
   map: "⌖", users: "◉", groups: "◎", shield: "◇", audit: "≡", help: "?",
   collection: "▥",
   apps: "⬡",
+  policy: "§",
+  quality: "◈",
+  knowledge: "▤",
+  archive: "□",
+  health: "●",
+  field: "⌖",
 };
 
 function AppShell({ children }: { children: ReactNode }) {

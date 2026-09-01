@@ -27,8 +27,15 @@ import type {
   DatasetGrantList,
   DevPersonaList,
   GovernanceGroups,
+  GovernanceApplications,
+  GovernanceDataPolicies,
+  GovernanceKnowledgeApprovals,
   GovernanceMembers,
+  GovernanceQualityProfiles,
+  GovernanceRetention,
+  GovernanceReviews,
   GovernanceRoles,
+  GovernanceSystemHealth,
   HomeDashboard,
   JobList,
   ModuleList,
@@ -359,16 +366,74 @@ export function getAuditEvents(params: URLSearchParams = new URLSearchParams()):
   return requestJson<AuditList>(`/api/audit/v1/events${query ? `?${query}` : ""}`);
 }
 
-export function getGovernanceMembers(): Promise<GovernanceMembers> {
-  return requestJson("/api/governance/v1/members");
+export function getGovernanceMembers(search = ""): Promise<GovernanceMembers> {
+  return requestJson(`/api/governance/v1/members${search ? `?search=${encodeURIComponent(search)}` : ""}`);
 }
 
-export function getGovernanceGroups(): Promise<GovernanceGroups> {
-  return requestJson("/api/governance/v1/groups");
+export function getGovernanceGroups(search = ""): Promise<GovernanceGroups> {
+  return requestJson(`/api/governance/v1/groups${search ? `?search=${encodeURIComponent(search)}` : ""}`);
 }
 
-export function getGovernanceRoles(): Promise<GovernanceRoles> {
-  return requestJson("/api/governance/v1/roles");
+export function getGovernanceRoles(search = ""): Promise<GovernanceRoles> {
+  return requestJson(`/api/governance/v1/roles${search ? `?search=${encodeURIComponent(search)}` : ""}`);
+}
+
+export function createGovernanceGroup(payload: { name: string; description: string; reason: string }): Promise<GovernanceGroups["items"][number]> {
+  return requestJson("/api/governance/v1/groups", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function addGovernanceGroupMember(groupId: string, userId: string): Promise<GovernanceGroups["items"][number]> {
+  return requestJson(`/api/governance/v1/groups/${groupId}/members`, { method: "POST", body: JSON.stringify({ user_id: userId, reason: "Workspace administrator added this member through governance controls." }) });
+}
+
+export function removeGovernanceGroupMember(groupId: string, userId: string): Promise<GovernanceGroups["items"][number]> {
+  return requestJson(`/api/governance/v1/groups/${groupId}/members/${userId}/remove`, { method: "POST", body: JSON.stringify({ reason: "Workspace administrator removed this group membership through governance controls." }) });
+}
+
+export function createGovernanceRoleAssignment(roleId: string, subjectId: string, validUntil: string | null): Promise<Record<string, unknown>> {
+  return requestJson(`/api/governance/v1/roles/${roleId}/assignments`, { method: "POST", body: JSON.stringify({ subject_id: subjectId, valid_until: validUntil, reason: "Workspace administrator assigned scoped access through governance controls." }) });
+}
+
+export function getGovernanceReviews(): Promise<GovernanceReviews> {
+  return requestJson("/api/governance/v1/reviews");
+}
+
+export function getGovernanceDataPolicies(): Promise<GovernanceDataPolicies> {
+  return requestJson("/api/governance/v1/data-policies");
+}
+
+export function getGovernanceQualityProfiles(): Promise<GovernanceQualityProfiles> {
+  return requestJson("/api/governance/v1/quality-profiles");
+}
+
+export function getGovernanceKnowledgeApprovals(): Promise<GovernanceKnowledgeApprovals> {
+  return requestJson("/api/governance/v1/knowledge-approvals");
+}
+
+export function getGovernanceApplications(): Promise<GovernanceApplications> {
+  return requestJson("/api/governance/v1/applications");
+}
+
+export function getGovernanceRetention(): Promise<GovernanceRetention> {
+  return requestJson("/api/governance/v1/retention");
+}
+
+export function getGovernanceSystemHealth(): Promise<GovernanceSystemHealth> {
+  return requestJson("/api/governance/v1/system-health");
+}
+
+export async function exportAuditEvents(params: URLSearchParams): Promise<void> {
+  const response = await fetch(`/api/audit/v1/events/export?${params.toString()}`, {
+    headers: { "X-Dev-User-Subject": getDevSubject() },
+  });
+  if (!response.ok) throw new Error(`Audit export failed (${response.status}).`);
+  const blob = await response.blob();
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = "workspace-audit-events.csv";
+  link.click();
+  URL.revokeObjectURL(href);
 }
 
 const investmentBase = "/api/apps/investment-prioritisation/v1";
