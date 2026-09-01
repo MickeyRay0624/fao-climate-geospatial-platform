@@ -20,6 +20,7 @@ from app.config import (
 from app.database import get_session
 from app.errors import conflict, not_found
 from app.identity import Principal, get_current_principal
+from app.extension_models import ExtensionCase, FollowUp, KnowledgeItem
 from app.jobs import celery_app, process_upload_session
 from app.platform_models import (
     AuditEvent,
@@ -109,6 +110,7 @@ def _navigation(principal: Principal, session: Session) -> list[dict[str, Any]]:
         {"path": "/data/reviews", "title": "Reviews", "section": "Data Hub", "permission": "dataset.review", "icon": "check"},
         {"path": "/apps", "title": "All applications", "section": "Applications", "permission": "workspace.view", "icon": "apps"},
         {"path": "/apps/investment-prioritisation/overview", "title": "Investment prioritisation", "section": "Applications", "permission": "apps.investment.use", "module": "investment-prioritisation", "icon": "map"},
+        {"path": "/apps/extension-field-support/worklist", "title": "Extension field support", "section": "Applications", "permission": "apps.extension.use", "module": "extension-field-support", "icon": "field"},
         {"path": "/governance/members", "title": "Members", "section": "Governance", "permission": "workspace.manage_members", "icon": "users"},
         {"path": "/governance/groups", "title": "Groups", "section": "Governance", "permission": "workspace.manage_groups", "icon": "groups"},
         {"path": "/governance/roles", "title": "Roles", "section": "Governance", "permission": "workspace.manage_roles", "icon": "shield"},
@@ -140,7 +142,7 @@ def capabilities(
             "data_hub.direct_upload": True,
             "data_hub.background_validation": True,
             "development_scan_bypass": APP_ENV in {"development", "test"} and ALLOW_INSECURE_DEV_FILE_SCAN,
-            "extension_field_support": False,
+            "extension_field_support": "extension-field-support" in principal.enabled_modules,
         },
         "development_identity": principal.dev_auth,
         "auth_mode": AUTH_MODE,
@@ -305,6 +307,43 @@ def home_dashboard(
                 else "fail_closed_or_operational"
             ),
         }
+    if "apps.extension.use" in principal.effective_permissions:
+        extension_query = select(ExtensionCase).where(
+            ExtensionCase.workspace_id == principal.active_workspace_id
+        )
+        if "extension.case.view_workspace" not in principal.effective_permissions:
+            extension_query = extension_query.where(
+                or_(
+                    ExtensionCase.created_by == principal.user_id,
+                    ExtensionCase.current_assignee_id == principal.user_id,
+                )
+            )
+        extension_cases = session.scalars(extension_query).all()
+        visible_case_ids = [item.id for item in extension_cases]
+        extension_card = {
+            "assigned_cases": sum(
+                item.current_assignee_id == principal.user_id for item in extension_cases
+            ),
+            "overdue_follow_ups": session.scalar(
+                select(func.count(FollowUp.id)).where(
+                    FollowUp.workspace_id == principal.active_workspace_id,
+                    FollowUp.status == "OPEN",
+                    FollowUp.due_date < func.current_date(),
+                    FollowUp.case_id.in_(visible_case_ids or [UUID(int=0)]),
+                )
+            )
+            or 0,
+            "pending_sync": sum(item.sync_status != "SYNCED" for item in extension_cases),
+        }
+        if "extension.case.view_workspace" in principal.effective_permissions:
+            extension_card["team_workload"] = {
+                "assigned": sum(item.current_assignee_id is not None for item in extension_cases),
+                "unassigned": sum(item.current_assignee_id is None for item in extension_cases),
+                "open": sum(item.status not in {"CLOSED", "CANCELLED"} for item in extension_cases),
+            }
+            role_cards["extension_supervisor"] = extension_card
+        else:
+            role_cards["extension_officer"] = extension_card
     return {
         "workspace": {
             "id": str(principal.active_workspace_id),
@@ -448,6 +487,51 @@ def platform_search(
                         "path": f"/apps/investment-prioritisation/runs/{run.id}",
                     }
                 )
+    if "apps.extension.use" in principal.effective_permissions:
+        extension_query = select(ExtensionCase).where(
+            ExtensionCase.workspace_id == principal.active_workspace_id,
+            or_(
+                ExtensionCase.case_number.ilike(term),
+                ExtensionCase.title.ilike(term),
+                ExtensionCase.location_label.ilike(term),
+            ),
+        )
+        if "extension.case.view_workspace" not in principal.effective_permissions:
+            extension_query = extension_query.where(
+                or_(
+                    ExtensionCase.created_by == principal.user_id,
+                    ExtensionCase.current_assignee_id == principal.user_id,
+                )
+            )
+        extension_cases = session.scalars(extension_query).all()
+        results.extend(
+            {
+                "type": "extension_case",
+                "id": str(item.id),
+                "title": f"{item.case_number} · {item.title}",
+                "subtitle": f"{item.status} · {item.priority} · DEMONSTRATION",
+                "path": f"/apps/extension-field-support/cases/{item.id}/summary",
+            }
+            for item in extension_cases
+        )
+        if "extension.knowledge.view" in principal.effective_permissions:
+            knowledge = session.scalars(
+                select(KnowledgeItem).where(
+                    KnowledgeItem.workspace_id == principal.active_workspace_id,
+                    KnowledgeItem.status == "ACTIVE",
+                    or_(KnowledgeItem.title.ilike(term), KnowledgeItem.item_key.ilike(term)),
+                )
+            ).all()
+            results.extend(
+                {
+                    "type": "extension_knowledge",
+                    "id": str(item.id),
+                    "title": item.title,
+                    "subtitle": "Demonstration knowledge template",
+                    "path": "/apps/extension-field-support/knowledge",
+                }
+                for item in knowledge
+            )
     return {"query": q, "items": results[:page_size], "meta": {"returned": min(len(results), page_size)}}
 
 

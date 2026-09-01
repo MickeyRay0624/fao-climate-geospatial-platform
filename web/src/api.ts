@@ -37,6 +37,14 @@ import type {
   SearchResponse,
   UploadSession,
   VersionPreview,
+  ExtensionActivity,
+  ExtensionCaseDetail,
+  ExtensionCaseSummary,
+  ExtensionKnowledge,
+  ExtensionObservation,
+  ExtensionSupervision,
+  ExtensionVerification,
+  ExtensionFollowUp,
 } from "./platform/types";
 
 const DEV_SUBJECT_KEY = "fao-platform-dev-subject";
@@ -483,4 +491,92 @@ export function createInvestmentComparison(leftRunId: string, rightRunId: string
     method: "POST",
     body: JSON.stringify({ left_run_id: leftRunId, right_run_id: rightRunId, top_n: 20 }),
   });
+}
+
+const extensionBase = "/api/apps/extension-field-support/v1";
+
+export function getExtensionOverview(): Promise<{ non_ai: boolean; demonstration: boolean; counts: Record<string, number>; scanner_mode: string; disclaimer: string }> {
+  return requestJson(`${extensionBase}/overview`);
+}
+
+export function getExtensionCases(worklist = false): Promise<{ items: ExtensionCaseSummary[]; meta: { total: number } }> {
+  return requestJson(`${extensionBase}/${worklist ? "worklist" : "cases"}`);
+}
+
+export function getExtensionCase(id: string): Promise<ExtensionCaseDetail> {
+  return requestJson(`${extensionBase}/cases/${id}`);
+}
+
+export function createExtensionCase(payload: Record<string, unknown>): Promise<ExtensionCaseDetail> {
+  return requestJson(`${extensionBase}/cases`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function assignExtensionCase(item: ExtensionCaseSummary, officerId: string, priority: string): Promise<ExtensionCaseDetail> {
+  return requestJson(`${extensionBase}/cases/${item.id}/assign`, { method: "POST", body: JSON.stringify({ officer_id: officerId, priority, reason: "Supervisor assigned the demonstration case through the workload view.", row_version: item.row_version }) });
+}
+
+export function transitionExtensionCase(item: ExtensionCaseSummary, targetStatus: string, reason: string): Promise<ExtensionCaseDetail> {
+  return requestJson(`${extensionBase}/cases/${item.id}/transition`, { method: "POST", body: JSON.stringify({ target_status: targetStatus, reason, row_version: item.row_version }) });
+}
+
+export function createExtensionObservation(caseId: string, payload: Record<string, unknown>): Promise<ExtensionObservation> {
+  return requestJson(`${extensionBase}/cases/${caseId}/observations`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function uploadExtensionMedia(caseId: string, file: File, observationId?: string): Promise<Record<string, unknown>> {
+  const form = new FormData();
+  form.append("file", file);
+  return requestJson(`${extensionBase}/cases/${caseId}/media${observationId ? `?observation_id=${encodeURIComponent(observationId)}` : ""}`, { method: "POST", body: form });
+}
+
+export function getExtensionKnowledge(): Promise<{ items: ExtensionKnowledge[]; meta: { total: number }; warning: string }> {
+  return requestJson(`${extensionBase}/knowledge`);
+}
+
+export function createExtensionAssessment(caseId: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return requestJson(`${extensionBase}/cases/${caseId}/assessments`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function getExtensionVerificationTemplates(): Promise<{ items: Array<{ id: string; template_key: string; name: string; version_number: number; status: string }> }> {
+  return requestJson(`${extensionBase}/verification-templates`);
+}
+
+export function startExtensionVerification(caseId: string, templateVersionId: string): Promise<ExtensionVerification> {
+  return requestJson(`${extensionBase}/cases/${caseId}/verifications`, { method: "POST", body: JSON.stringify({ template_version_id: templateVersionId }) });
+}
+
+export function saveExtensionVerification(item: ExtensionVerification, responses: Array<{ verification_item_id: string; value: string; evidence_note: string }>, complete: boolean): Promise<ExtensionVerification> {
+  return requestJson(`${extensionBase}/verifications/${item.id}`, { method: "PATCH", body: JSON.stringify({ responses, complete, row_version: item.row_version }) });
+}
+
+export function getExtensionActivities(): Promise<{ items: ExtensionActivity[]; meta: { total: number } }> {
+  return requestJson(`${extensionBase}/activities`);
+}
+
+export function createExtensionActivity(payload: Record<string, unknown>): Promise<ExtensionActivity> {
+  return requestJson(`${extensionBase}/activities`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function approveExtensionActivity(item: ExtensionActivity, decision: "APPROVE" | "REJECT"): Promise<ExtensionActivity> {
+  return requestJson(`${extensionBase}/activities/${item.id}/approval`, { method: "POST", body: JSON.stringify({ decision, reason: "Supervisor reviewed the demonstration activity plan.", row_version: item.row_version }) });
+}
+
+export function createExtensionFollowUp(caseId: string, payload: Record<string, unknown>): Promise<ExtensionFollowUp> {
+  return requestJson(`${extensionBase}/cases/${caseId}/follow-ups`, { method: "POST", body: JSON.stringify(payload) });
+}
+
+export function completeExtensionFollowUp(item: ExtensionFollowUp, outcome: string): Promise<ExtensionFollowUp> {
+  return requestJson(`${extensionBase}/follow-ups/${item.id}/complete`, { method: "POST", body: JSON.stringify({ outcome, row_version: item.row_version }) });
+}
+
+export function getExtensionSupervision(): Promise<ExtensionSupervision> {
+  return requestJson(`${extensionBase}/supervision`);
+}
+
+export function getExtensionMap(): Promise<{ type: "FeatureCollection"; features: Array<{ type: "Feature"; id: string; geometry: { type: "Point"; coordinates: number[] }; properties: Record<string, unknown> }>; approximate_only: boolean }> {
+  return requestJson(`${extensionBase}/map`);
+}
+
+export function getExtensionSyncStatus(): Promise<{ server: string; accepted_mutations: string[]; idempotency: string; limitations: string[] }> {
+  return requestJson(`${extensionBase}/sync`);
 }

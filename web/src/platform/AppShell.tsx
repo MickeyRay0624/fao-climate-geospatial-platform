@@ -115,6 +115,9 @@ function AppShell({ children }: { children: ReactNode }) {
               <select
                 value={capabilities.current_user.external_subject}
                 onChange={(event) => {
+                  Object.keys(sessionStorage)
+                    .filter((key) => key.startsWith("extension:draft:"))
+                    .forEach((key) => sessionStorage.removeItem(key));
                   setDevSubject(event.target.value);
                   setIdentityEpoch((value) => value + 1);
                 }}

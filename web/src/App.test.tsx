@@ -11,6 +11,8 @@ import {
   getDataHubVersion,
   getDatasetGrants,
   getDevPersonas,
+  getExtensionCases,
+  getExtensionOverview,
   getJobs,
   getHomeDashboard,
   getModules,
@@ -30,6 +32,8 @@ vi.mock("./api", async () => {
     getDataHubDataset: vi.fn(),
     getDataHubVersion: vi.fn(),
     getDatasetGrants: vi.fn(),
+    getExtensionCases: vi.fn(),
+    getExtensionOverview: vi.fn(),
   };
 });
 
@@ -57,6 +61,7 @@ const nav = {
   catalog: { path: "/data/catalog", title: "Team catalogue", section: "Data Hub", permission: "data.catalog.enter", icon: "database" },
   reviews: { path: "/data/reviews", title: "Reviews", section: "Data Hub", permission: "dataset.review", icon: "check" },
   investment: { path: "/apps/investment-prioritisation/overview", title: "Investment prioritisation", section: "Applications", permission: "apps.investment.use", module: "investment-prioritisation", icon: "map" },
+  extension: { path: "/apps/extension-field-support/worklist", title: "Extension field support", section: "Applications", permission: "apps.extension.use", module: "extension-field-support", icon: "users" },
   audit: { path: "/governance/audit", title: "Audit log", section: "Governance", permission: "audit.view", icon: "audit" },
 };
 
@@ -163,6 +168,40 @@ beforeEach(() => {
   vi.mocked(getDataHubDataset).mockResolvedValue(governedDataset);
   vi.mocked(getDataHubVersion).mockResolvedValue(publishedVersion);
   vi.mocked(getDatasetGrants).mockResolvedValue({ items: [], meta: { total: 0 } });
+  vi.mocked(getExtensionOverview).mockResolvedValue({
+    non_ai: true,
+    demonstration: true,
+    counts: { assigned: 1 },
+    scanner_mode: "DEVELOPMENT_BYPASS",
+    disclaimer: "Fictional demonstration records; no automated advice.",
+  });
+  vi.mocked(getExtensionCases).mockResolvedValue({
+    items: [{
+      id: "case-1",
+      workspace_id: "workspace-1",
+      case_number: "DEMO-001",
+      title: "Fictional water-condition observation",
+      crop: "Rice",
+      growth_stage: "Tillering",
+      severity: "MODERATE",
+      affected_area_ha: 0.5,
+      location_label: "Fictional demo zone",
+      approximate_location: { lat: 11.5, lon: 104.9 },
+      priority: "HIGH",
+      status: "ASSIGNED",
+      notes: "Demonstration only.",
+      demonstration: true,
+      assignee: { id: "user-1", display_name: "Sreypov Mom" },
+      last_observation_at: null,
+      next_action: "Record a structured observation",
+      overdue_follow_ups: 1,
+      sync_status: "SYNCED",
+      row_version: 1,
+      created_at: "2026-09-01T00:00:00Z",
+      updated_at: "2026-09-01T00:00:00Z",
+    }],
+    meta: { total: 1 },
+  });
 });
 
 afterEach(() => cleanup());
@@ -196,6 +235,19 @@ describe("platform shell and route policy", () => {
     renderRoute("/apps/investment-prioritisation/overview");
 
     expect(await screen.findByRole("heading", { name: "Native investment module test surface" })).toBeInTheDocument();
+  });
+
+  it("mounts the permission-scoped extension worklist with mobile navigation", async () => {
+    vi.mocked(getCapabilities).mockResolvedValue(capabilities(
+      ["workspace.view", "apps.extension.use", "extension.case.view_assigned"],
+      [nav.home, nav.extension],
+    ));
+    renderRoute("/apps/extension-field-support/worklist");
+
+    expect(await screen.findByRole("heading", { name: "Extension Officer Field Support" })).toBeInTheDocument();
+    expect(await screen.findByText("Fictional water-condition observation")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Mobile extension navigation" })).toBeInTheDocument();
+    expect(screen.getByText("1 overdue follow-up")).toBeInTheDocument();
   });
 });
 

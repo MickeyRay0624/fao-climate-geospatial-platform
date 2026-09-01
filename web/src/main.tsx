@@ -14,3 +14,10 @@ createRoot(document.getElementById("root")!).render(
     </BrowserRouter>
   </StrictMode>,
 );
+
+const productionBuild = (import.meta as ImportMeta & { env?: { PROD?: boolean } }).env?.PROD;
+if ("serviceWorker" in navigator && productionBuild) {
+  window.addEventListener("load", () => {
+    void navigator.serviceWorker.register("/sw.js");
+  });
+}

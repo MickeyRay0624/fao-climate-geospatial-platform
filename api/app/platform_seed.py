@@ -71,6 +71,29 @@ PERMISSIONS = {
     "lineage.view",
     "quality.manage_profiles",
     "apps.investment.use",
+    "apps.extension.use",
+    "apps.extension.supervise",
+    "extension.case.create",
+    "extension.case.view_assigned",
+    "extension.case.view_workspace",
+    "extension.case.update_assigned",
+    "extension.case.assign",
+    "extension.case.change_priority",
+    "extension.case.close",
+    "extension.observation.create",
+    "extension.media.upload",
+    "extension.media.view_sensitive",
+    "extension.assessment.record",
+    "extension.assessment.review",
+    "extension.verification.complete",
+    "extension.activity.plan",
+    "extension.activity.approve",
+    "extension.followup.manage",
+    "extension.knowledge.view",
+    "extension.knowledge.edit",
+    "extension.knowledge.review",
+    "extension.knowledge.approve",
+    "extension.aggregate.publish",
     "investment.input_set.create",
     "investment.input_set.lock",
     "investment.run.create",
@@ -137,6 +160,33 @@ ROLE_PERMISSIONS = {
         "apps.investment.use", "investment.method.approve", "investment.scenario.approve",
         "investment.run.view", "investment.run.compare", "jobs.view_own",
     },
+    "extension_officer": {
+        "workspace.view", "apps.extension.use", "extension.case.create",
+        "extension.case.view_assigned", "extension.case.update_assigned",
+        "extension.observation.create", "extension.media.upload",
+        "extension.media.view_sensitive", "extension.assessment.record",
+        "extension.verification.complete", "extension.activity.plan",
+        "extension.followup.manage", "extension.knowledge.view", "jobs.view_own",
+    },
+    "extension_supervisor": {
+        "workspace.view", "apps.extension.use", "apps.extension.supervise",
+        "extension.case.create", "extension.case.view_assigned",
+        "extension.case.view_workspace", "extension.case.update_assigned",
+        "extension.case.assign", "extension.case.change_priority",
+        "extension.case.close", "extension.observation.create",
+        "extension.media.view_sensitive", "extension.assessment.review",
+        "extension.verification.complete", "extension.activity.plan",
+        "extension.activity.approve", "extension.followup.manage",
+        "extension.knowledge.view", "audit.view", "jobs.view_own",
+    },
+    "knowledge_editor": {
+        "workspace.view", "apps.extension.use", "extension.knowledge.view",
+        "extension.knowledge.edit", "extension.knowledge.review", "jobs.view_own",
+    },
+    "knowledge_approver": {
+        "workspace.view", "apps.extension.use", "extension.knowledge.view",
+        "extension.knowledge.approve", "jobs.view_own",
+    },
 }
 
 
@@ -150,6 +200,11 @@ PERSONAS = {
     "dev-auditor": ("Samnang Khem", "Auditor", "auditor"),
     "dev-method-editor": ("Chantha Ros", "Investment method editor", "method_editor"),
     "dev-method-approver": ("Bopha Keo", "Investment method approver", "method_approver"),
+    "dev-extension-officer-1": ("Sreypov Mom", "Extension officer 1", "extension_officer"),
+    "dev-extension-officer-2": ("Rithy Touch", "Extension officer 2", "extension_officer"),
+    "dev-extension-supervisor": ("Sokha Meas", "Extension supervisor", "extension_supervisor"),
+    "dev-knowledge-editor": ("Pisey Heng", "Knowledge editor", "knowledge_editor"),
+    "dev-knowledge-approver": ("Kunthea Sim", "Knowledge approver", "knowledge_approver"),
 }
 
 
@@ -351,7 +406,10 @@ def seed_platform(session: Session) -> None:
             module.module_version = manifest["module"]["version"]
             module.manifest = manifest
             module.manifest_valid = True
-        enabled = module_key == "investment-prioritisation"
+        enabled = module_key in {
+            "investment-prioritisation",
+            "extension-field-support",
+        }
         workspace_module = session.scalar(
             select(WorkspaceModule).where(
                 WorkspaceModule.workspace_id == workspace.id,
@@ -411,6 +469,9 @@ def seed_platform(session: Session) -> None:
     from app.investment.seed import seed_investment_governance
 
     seed_investment_governance(session)
+    from app.extension_seed import seed_extension_demo
+
+    seed_extension_demo(session, workspace, users)
     _seed_demo_collection(session, workspace, users["dev-admin"])
     session.commit()
 

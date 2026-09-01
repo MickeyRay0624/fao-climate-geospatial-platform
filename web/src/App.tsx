@@ -17,6 +17,7 @@ import UploadWizardPage from "./pages/UploadWizardPage";
 import VersionDetailPage from "./pages/VersionDetailPage";
 
 const InvestmentPage = lazy(() => import("./modules/investment/InvestmentPage"));
+const ExtensionPage = lazy(() => import("./modules/extension/ExtensionPage"));
 
 function RequirePermission({ permission, children }: { permission: string; children: React.ReactNode }) {
   const { capabilities } = usePlatform();
@@ -53,6 +54,14 @@ function PlatformRoutes() {
         element={
           <RequirePermission permission="apps.investment.use">
             <Suspense fallback={<div className="platform-loading">Loading the spatial analysis module…</div>}><InvestmentPage /></Suspense>
+          </RequirePermission>
+        }
+      />
+      <Route
+        path="/apps/extension-field-support/*"
+        element={
+          <RequirePermission permission="apps.extension.use">
+            <Suspense fallback={<div className="platform-loading">Loading the extension field workflow…</div>}><ExtensionPage /></Suspense>
           </RequirePermission>
         }
       />
