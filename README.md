@@ -55,12 +55,14 @@ Compose waits for PostgreSQL, runs `alembic upgrade head`, executes the idempote
 
 Open:
 
-- Platform: <http://localhost:3000/home>
-- Data Hub: <http://localhost:3000/data/catalog>
-- Investment module: <http://localhost:3000/apps/investment-prioritisation/overview>
+- Platform: <http://localhost:3001/home>
+- Data Hub: <http://localhost:3001/data/catalog>
+- Investment module: <http://localhost:3001/apps/investment-prioritisation/overview>
 - OpenAPI: <http://localhost:8000/docs>
 - Health: <http://localhost:8000/health>
 - MinIO console: <http://localhost:9001>
+
+The default host Web port is `3001`. Override it with `WEB_HOST_PORT=<port>` in the local `.env` file when needed; API CORS origins follow the selected port automatically. Vite continues to listen on port 3000 inside the private Docker network, which does not occupy the host's port 3000.
 
 Stop containers without deleting data:
 

@@ -4,7 +4,7 @@
 
 - Docker Desktop and Docker Compose v2
 - Node.js/npm only when running frontend checks on the host
-- Ports 3000, 5432, 6379, 8000, 9000, and 9001 available on loopback
+- Ports 3001, 5432, 6379, 8000, 9000, and 9001 available on loopback
 
 All published ports bind to `127.0.0.1`; the Compose configuration is not a public deployment.
 
@@ -17,7 +17,7 @@ docker compose config
 docker compose up --build -d
 docker compose ps -a
 curl -fsS http://localhost:8000/health
-curl -fsS http://localhost:3000/
+curl -fsS http://localhost:3001/
 ```
 
 The one-command path starts PostgreSQL/PostGIS, MinIO, and Redis; runs Alembic; runs the idempotent seed; then starts FastAPI, Celery, and Vite. `migrate` and `seed` should finish with exit code 0; they are one-shot containers, not unhealthy services.

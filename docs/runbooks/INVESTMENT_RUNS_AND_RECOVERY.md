@@ -10,7 +10,7 @@ curl -fsS http://localhost:8000/health
 docker compose exec -T worker celery -A app.jobs.celery_app inspect active_queues
 ```
 
-The worker must consume `geospatial-analysis`. Open the native module at <http://localhost:3000/apps/investment-prioritisation/overview>. Opening, listing, inspecting or comparing records is read-only. Only the explicit create command starts a run.
+The worker must consume `geospatial-analysis`. Open the native module at <http://localhost:3001/apps/investment-prioritisation/overview>. Opening, listing, inspecting or comparing records is read-only. Only the explicit create command starts a run.
 
 Run state and structured job evidence are available from:
 
