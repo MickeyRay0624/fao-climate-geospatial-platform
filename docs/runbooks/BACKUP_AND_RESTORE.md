@@ -67,7 +67,7 @@ Compare counts, catalog/version state, source key/size/SHA-256, and a known rank
 docker compose exec -T db dropdb -U rice_dss rice_dss_restore_verify
 ```
 
-The 2026-08-31 baseline was verified this way: 111 areas, 777 indicators, 13 runs, and 1,443 priority results.
+The preserved legacy baseline remains 111 areas, 777 indicators, 13 runs, and 1,443 priority results. The 2026-09-01 pre-demonstration snapshot is `backups/pre-demo-platform-20260901T072023Z/` (Git-ignored) and also records the locally retained real-sample catalogue/object evidence.
 
 ## Incident rollback
 
@@ -82,4 +82,6 @@ Alembic downgrade does not replace this procedure. Phase 1 and Phase 2A delibera
 
 ## MinIO recovery note
 
-The current baseline contains an inventory, not an independent byte-for-byte copy of the MinIO volume. For production, configure versioned object storage plus replicated/off-host backup and test object restoration. Local volume survival alone is not a backup strategy.
+The current baseline contains an inventory, not an independent byte-for-byte copy of the MinIO volume. The governance health page therefore reports local evidence with `off_host=false`; it must not be described as a complete backup. For production, configure versioned object storage plus replicated/off-host backup and test object restoration. Local volume survival alone is not a backup strategy.
+
+For repeatable presentations, restore a verified dump to a new database while retaining the matching object volume. Follow [DEMO_RESET_WITHOUT_DATA_LOSS.md](DEMO_RESET_WITHOUT_DATA_LOSS.md); never overwrite the active database merely to make the UI look clean.

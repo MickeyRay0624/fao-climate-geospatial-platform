@@ -1,6 +1,6 @@
 # Contributing
 
-This private repository contains a local platform prototype. Changes should be small enough to review, preserve governed evidence and keep real evaluation data outside Git.
+This repository contains a local platform demonstration. Changes should be small enough to review, preserve governed evidence and keep restricted or unapproved source data outside Git.
 
 ## Development workflow
 
@@ -32,6 +32,7 @@ docker compose up -d --build
 python scripts/e2e_datahub.py
 python scripts/e2e_negative_controls.py
 python scripts/e2e_investment.py
+python scripts/demo_smoke.py
 npm --prefix web run test:e2e
 docker compose down
 ```

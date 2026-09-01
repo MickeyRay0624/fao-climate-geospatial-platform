@@ -2,7 +2,7 @@
 
 ## Supported scope
 
-Security fixes are accepted against the latest `main` branch. The repository is a private prototype, not an internet-facing or production service.
+Security fixes are accepted against the latest `main` branch. The repository is public; the application is a loopback-only local demonstration, not an internet-facing or production service.
 
 ## Reporting a vulnerability
 
