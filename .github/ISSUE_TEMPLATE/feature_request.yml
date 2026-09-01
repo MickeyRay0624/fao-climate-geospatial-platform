@@ -1,0 +1,30 @@
+name: Feature request
+description: Propose a bounded platform or module capability.
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: user
+    attributes:
+      label: User and decision
+      description: Who uses this capability and what decision or workflow changes?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Desired outcome
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Data, method and governance needs
+      description: List owners, profiles, permissions, review requirements and known limitations.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance evidence
+      description: Describe observable behavior, security controls and test journeys.
+    validations:
+      required: true
