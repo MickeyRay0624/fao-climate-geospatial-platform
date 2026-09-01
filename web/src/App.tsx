@@ -4,6 +4,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import AppShell, { usePlatform } from "./platform/AppShell";
 import AuditPage from "./pages/AuditPage";
 import CataloguePage from "./pages/CataloguePage";
+import CollectionsPage from "./pages/CollectionsPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
 import GovernancePage from "./pages/GovernancePage";
 import HelpPage from "./pages/HelpPage";
@@ -36,11 +37,14 @@ function PlatformRoutes() {
       <Route path="/home" element={<HomePage />} />
       <Route path="/data/catalog" element={<CataloguePage />} />
       <Route path="/data/mine" element={<CataloguePage mine />} />
+      <Route path="/data/collections" element={<CollectionsPage />} />
+      <Route path="/data/collections/:collectionId" element={<CollectionsPage />} />
       <Route path="/data/uploads" element={<JobsPage />} />
       <Route path="/data/reviews" element={<RequirePermission permission="dataset.review"><ReviewsPage /></RequirePermission>} />
       <Route path="/data/datasets/new" element={<RequirePermission permission="dataset.create"><UploadWizardPage /></RequirePermission>} />
       <Route path="/data/datasets/:datasetId" element={<DatasetDetailPage />} />
       <Route path="/data/versions/:versionId" element={<VersionDetailPage />} />
+      <Route path="/data/datasets/:datasetId/versions/:versionId/*" element={<VersionDetailPage />} />
       <Route
         path="/apps/investment-prioritisation/*"
         element={

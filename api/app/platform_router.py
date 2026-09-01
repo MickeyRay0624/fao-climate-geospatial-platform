@@ -98,6 +98,7 @@ def _navigation(principal: Principal, session: Session) -> list[dict[str, Any]]:
         {"path": "/home", "title": "Overview", "section": "Workspace", "permission": "workspace.view", "icon": "home"},
         {"path": "/data/catalog", "title": "Team catalogue", "section": "Data Hub", "permission": "data.catalog.enter", "icon": "database"},
         {"path": "/data/mine", "title": "My data", "section": "Data Hub", "permission": "data.catalog.enter", "icon": "folder"},
+        {"path": "/data/collections", "title": "Collections", "section": "Data Hub", "permission": "data.catalog.enter", "icon": "collection"},
         {"path": "/data/uploads", "title": "Upload centre", "section": "Data Hub", "permission": "dataset.upload_version", "icon": "upload"},
         {"path": "/data/reviews", "title": "Reviews", "section": "Data Hub", "permission": "dataset.review", "icon": "check"},
         {"path": "/apps/investment-prioritisation/overview", "title": "Investment prioritisation", "section": "Applications", "permission": "apps.investment.use", "module": "investment-prioritisation", "icon": "map"},

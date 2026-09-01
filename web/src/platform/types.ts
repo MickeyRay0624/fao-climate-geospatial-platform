@@ -72,9 +72,14 @@ export type DataHubDatasetSummary = {
   classification: string;
   lifecycle_status: string;
   licence_code: string | null;
-  current_published_version: { id: string; version_label: string; state: string } | null;
+  current_published_version: { id: string; version_label: string; state: string; profile_key: string } | null;
   version_count: number;
   quality_status: string | null;
+  tags: string[];
+  evidence_type: "REAL_SAMPLE" | "SYNTHETIC_DEMO" | "GOVERNED";
+  licence_status: "NOT_CONFIRMED" | "DECLARED" | "NOT_DECLARED";
+  spatial: { crs: string | null; bbox: number[] | null; geometry_type: string | null } | null;
+  temporal: { start: string | null; end: string | null } | null;
   row_version: number;
   created_at: string | null;
   updated_at: string | null;
@@ -115,6 +120,49 @@ export type DataHubVersion = {
 
 export type DataHubDataset = DataHubDatasetSummary & { versions?: DataHubVersion[] };
 export type DataHubDatasetList = { items: DataHubDatasetSummary[]; meta: { page: number; page_size: number; total: number; pages: number; sort: string } };
+
+export type DataHubCollection = {
+  id: string;
+  workspace_id: string;
+  slug: string;
+  title: string;
+  description: string;
+  tags: string[];
+  status: "ACTIVE" | "ARCHIVED";
+  owner: { id: string; display_name: string };
+  can_manage: boolean;
+  member_count: number;
+  members: Array<{
+    id: string;
+    role: string;
+    ordinal: number;
+    dataset: { id: string; slug: string; title: string; classification: string };
+    version: { id: string; version_label: string; state: string; profile_key: string };
+  }> | null;
+  row_version: number;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+export type DataHubCollectionList = {
+  items: DataHubCollection[];
+  meta: { page: number; page_size: number; total: number };
+};
+
+export type VersionPreview = {
+  representation_type: string;
+  preview_kind: "vector" | "table" | "stored_sample" | "metadata";
+  preview: unknown;
+  schema: Record<string, unknown>;
+  statistics: Record<string, unknown>;
+  bbox: number[] | null;
+  crs: string | null;
+  geometry_type: string | null;
+  page: { number: number; size: number; total: number };
+  simplified: boolean;
+  source_asset_unchanged: boolean;
+  display_cap: number | null;
+};
 
 export type DatasetGrant = {
   id: string;

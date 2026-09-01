@@ -18,6 +18,8 @@ import type {
   Capabilities,
   DataHubDataset,
   DataHubDatasetList,
+  DataHubCollection,
+  DataHubCollectionList,
   DataHubVersion,
   DatasetGrant,
   DatasetGrantList,
@@ -30,6 +32,7 @@ import type {
   Principal,
   ReviewList,
   UploadSession,
+  VersionPreview,
 } from "./platform/types";
 
 const DEV_SUBJECT_KEY = "fao-platform-dev-subject";
@@ -157,6 +160,65 @@ export function getDataHubVersion(id: string): Promise<DataHubVersion> {
   return requestJson<DataHubVersion>(`/api/data/v1/versions/${id}`);
 }
 
+export function getDataHubCollections(): Promise<DataHubCollectionList> {
+  return requestJson("/api/data/v1/collections?page_size=100");
+}
+
+export function getDataHubCollection(id: string): Promise<DataHubCollection> {
+  return requestJson(`/api/data/v1/collections/${id}`);
+}
+
+export function createDataHubCollection(payload: {
+  title: string;
+  description: string;
+  tags: string[];
+}): Promise<DataHubCollection> {
+  return requestJson("/api/data/v1/collections", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function addDataHubCollectionMember(
+  collectionId: string,
+  versionId: string,
+): Promise<DataHubCollection> {
+  return requestJson(`/api/data/v1/collections/${collectionId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ dataset_version_id: versionId, role: "member", ordinal: 100 }),
+  });
+}
+
+export function updateDataHubCollection(
+  collection: DataHubCollection,
+  payload: { title: string; description: string; tags: string[] },
+): Promise<DataHubCollection> {
+  return requestJson(`/api/data/v1/collections/${collection.id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ ...payload, row_version: collection.row_version }),
+  });
+}
+
+export function archiveDataHubCollection(collection: DataHubCollection): Promise<DataHubCollection> {
+  return requestJson(`/api/data/v1/collections/${collection.id}/archive`, {
+    method: "POST",
+    body: JSON.stringify({
+      row_version: collection.row_version,
+      reason: "Archive this exact-version collection while preserving its audit history.",
+    }),
+  });
+}
+
+export function removeDataHubCollectionMember(
+  collection: DataHubCollection,
+  memberId: string,
+): Promise<DataHubCollection> {
+  return requestJson(
+    `/api/data/v1/collections/${collection.id}/members/${memberId}?row_version=${collection.row_version}`,
+    { method: "DELETE" },
+  );
+}
+
 export function getDatasetGrants(datasetId: string): Promise<DatasetGrantList> {
   return requestJson<DatasetGrantList>(`/api/data/v1/datasets/${datasetId}/grants`);
 }
@@ -260,8 +322,8 @@ export function publishDataHubVersion(version: DataHubVersion, exceptionReason?:
   });
 }
 
-export function getVersionPreview(versionId: string): Promise<Record<string, unknown>> {
-  return requestJson(`/api/data/v1/versions/${versionId}/preview`);
+export function getVersionPreview(versionId: string, page = 1): Promise<VersionPreview> {
+  return requestJson(`/api/data/v1/versions/${versionId}/preview?page=${page}&page_size=25&simplify_tolerance=0.002`);
 }
 
 export function getVersionLineage(versionId: string): Promise<Record<string, unknown>> {

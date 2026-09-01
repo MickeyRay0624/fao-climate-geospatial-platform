@@ -28,6 +28,7 @@ export function usePlatform(): PlatformContextValue {
 const iconGlyph: Record<string, string> = {
   home: "⌂", database: "▦", folder: "▤", upload: "⇧", check: "✓",
   map: "⌖", users: "◉", groups: "◎", shield: "◇", audit: "≡", help: "?",
+  collection: "▥",
 };
 
 function AppShell({ children }: { children: ReactNode }) {

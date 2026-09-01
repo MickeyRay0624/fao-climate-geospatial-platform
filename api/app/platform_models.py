@@ -393,13 +393,20 @@ class Collection(Base):
     slug: Mapped[str] = mapped_column(String(160), nullable=False)
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
+    tags: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="ACTIVE", index=True)
     owner_user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    row_version: Mapped[int] = mapped_column(BigInteger, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class CollectionMember(Base):
     __tablename__ = "collection_members"
-    __table_args__ = ({"schema": "catalog"},)
+    __table_args__ = (
+        UniqueConstraint("collection_id", "dataset_version_id", name="uq_collection_exact_version"),
+        {"schema": "catalog"},
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     collection_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("catalog.collections.id", ondelete="CASCADE"), index=True)

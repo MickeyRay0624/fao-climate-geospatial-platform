@@ -13,6 +13,8 @@ from app.platform_models import (
     CatalogAsset,
     CatalogDataset,
     CatalogDatasetVersion,
+    Collection,
+    CollectionMember,
     Group,
     GroupMembership,
     LegacyIdMapping,
@@ -408,7 +410,71 @@ def seed_platform(session: Session) -> None:
     from app.investment.seed import seed_investment_governance
 
     seed_investment_governance(session)
+    _seed_demo_collection(session, workspace, users["dev-admin"])
     session.commit()
+
+
+def _seed_demo_collection(
+    session: Session, workspace: Workspace, owner: User
+) -> None:
+    collection = session.scalar(
+        select(Collection).where(
+            Collection.workspace_id == workspace.id,
+            Collection.slug == "hih-cambodia-data-showcase",
+        )
+    )
+    if collection is None:
+        collection = Collection(
+            id=stable_id("collection", f"{workspace.id}:hih-cambodia-data-showcase"),
+            workspace_id=workspace.id,
+            slug="hih-cambodia-data-showcase",
+            title="HIH Cambodia data showcase",
+            description=(
+                "Published real-data samples retained for profile, lineage and "
+                "investment-readiness demonstration; not operational evidence."
+            ),
+            tags=["Cambodia", "HIH", "real-data-sample"],
+            status="ACTIVE",
+            owner_user_id=owner.id,
+        )
+        session.add(collection)
+        session.flush()
+    if collection.status != "ACTIVE":
+        return
+    candidates = session.scalars(
+        select(CatalogDataset).where(
+            CatalogDataset.workspace_id == workspace.id,
+            CatalogDataset.licence_code == "UNCONFIRMED-SOURCE-LICENCE",
+            CatalogDataset.current_published_version_id.is_not(None),
+        )
+    ).all()
+    for ordinal, dataset in enumerate(
+        sorted(candidates, key=lambda item: item.title), start=1
+    ):
+        title = dataset.title.lower()
+        if "gaul" not in title and "mpi" not in title:
+            continue
+        if session.scalar(
+            select(CollectionMember.id).where(
+                CollectionMember.collection_id == collection.id,
+                CollectionMember.dataset_version_id
+                == dataset.current_published_version_id,
+            )
+        ):
+            continue
+        session.add(
+            CollectionMember(
+                id=stable_id(
+                    "collection-member",
+                    f"{collection.id}:{dataset.current_published_version_id}",
+                ),
+                collection_id=collection.id,
+                dataset_id=dataset.id,
+                dataset_version_id=dataset.current_published_version_id,
+                role="boundary" if "gaul" in title else "poverty-indicator",
+                ordinal=ordinal,
+            )
+        )
 
 
 def _backfill_legacy(
