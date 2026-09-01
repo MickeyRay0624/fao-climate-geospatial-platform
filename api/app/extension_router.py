@@ -24,7 +24,6 @@ from app.extension_models import (
     ExtensionCase,
     FollowUp,
     KnowledgeItem,
-    KnowledgeSource,
     KnowledgeVersion,
     MediaAsset,
     Observation,
