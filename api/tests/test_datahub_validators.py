@@ -9,6 +9,8 @@ from app.datahub.validators import (
     validate_file,
     validate_generic_table,
     validate_generic_vector,
+    validate_administrative_boundary,
+    validate_normalised_indicator_layer,
 )
 
 
@@ -90,3 +92,66 @@ def test_file_scanner_boundary_is_visibly_bypassed_or_fail_closed() -> None:
     assert DevelopmentBypassScanner().scan("sample.csv", b"data") == "BYPASSED_DEV"
     with pytest.raises(RuntimeError, match="No approved malware scanner"):
         FailClosedScanner().scan("sample.csv", b"data")
+
+
+def test_native_boundary_contract_records_extent_schema_and_crs_assumption() -> None:
+    payload = json.dumps(
+        {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "area_code": "KH-01",
+                        "area_name": "Synthetic district",
+                        "admin_level": "district",
+                        "parent_code": "KH",
+                    },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[[104.0, 11.0], [104.1, 11.0], [104.1, 11.1], [104.0, 11.0]]],
+                    },
+                }
+            ],
+        }
+    ).encode()
+
+    result = validate_administrative_boundary("boundary.geojson", payload)
+
+    assert result.status == "WARNING"
+    assert result.record_count == 1
+    assert result.representation_type == "administrative_boundary"
+    assert result.schema["join_key"] == "area_code"
+    assert result.bbox == [104.0, 11.0, 104.1, 11.1]
+    assert {issue.code for issue in result.issues} == {"VECTOR_CRS_ASSUMED"}
+
+
+def test_native_indicator_missing_value_warns_without_blocking() -> None:
+    result = validate_normalised_indicator_layer(
+        "poverty.csv",
+        (
+            b"area_code,value,indicator_code,unit,direction,time_start,time_end\n"
+            b"KH-01,0.42,poverty_index,index,higher_is_priority,2025-01-01,2025-12-31\n"
+            b"KH-02,,poverty_index,index,higher_is_priority,2025-01-01,2025-12-31\n"
+        ),
+    )
+
+    assert result.status == "WARNING"
+    assert result.has_blocking is False
+    assert result.representation_type == "normalised_indicator_table"
+    assert result.schema["indicator_code"] == "poverty_index"
+    assert {issue.code for issue in result.issues} == {"INDICATOR_VALUES_MISSING"}
+
+
+def test_native_indicator_duplicate_area_code_is_blocking() -> None:
+    result = validate_normalised_indicator_layer(
+        "poverty.csv",
+        (
+            b"area_code,value,indicator_code,unit,direction,time_start,time_end\n"
+            b"KH-01,0.42,poverty_index,index,higher_is_priority,2025-01-01,2025-12-31\n"
+            b"KH-01,0.50,poverty_index,index,higher_is_priority,2025-01-01,2025-12-31\n"
+        ),
+    )
+
+    assert result.status == "FAILED"
+    assert "INDICATOR_AREA_CODE_DUPLICATE" in {issue.code for issue in result.issues}

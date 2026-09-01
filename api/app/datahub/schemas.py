@@ -59,6 +59,8 @@ class CreateVersionRequest(BaseModel):
     version_label: str = Field(min_length=1, max_length=120)
     profile_key: Literal[
         "analysis-ready-priority-bundle@1.0",
+        "administrative-boundary@1.0",
+        "normalised-indicator-layer@1.0",
         "generic-vector@1.0",
         "generic-table@1.0",
         "document@1.0",

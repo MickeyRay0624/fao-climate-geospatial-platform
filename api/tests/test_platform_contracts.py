@@ -7,7 +7,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.audit_service import record_event
-from app.datahub.schemas import CreateDatasetRequest, CreateGrantRequest, UploadFileSpec
+from app.datahub.schemas import (
+    CreateDatasetRequest,
+    CreateGrantRequest,
+    CreateVersionRequest,
+    UploadFileSpec,
+)
 from app.module_registry import MANIFEST_DIR, load_validated_manifests
 
 
@@ -47,6 +52,26 @@ def test_sensitive_field_classification_cannot_be_public() -> None:
             visibility="PUBLIC",
             classification="SENSITIVE_FIELD",
         )
+
+
+@pytest.mark.parametrize(
+    "profile_key",
+    ["administrative-boundary@1.0", "normalised-indicator-layer@1.0"],
+)
+def test_public_create_version_contract_accepts_native_profiles(profile_key: str) -> None:
+    request = CreateVersionRequest(
+        version_label="1.0.0",
+        profile_key=profile_key,
+        change_summary="Native contract verification",
+        metadata={
+            "title": "Native profile verification",
+            "abstract": "Synthetic metadata used to verify the public request contract.",
+            "provenance": "Deterministic test fixture.",
+            "use_limitation": "Testing only; not operational evidence.",
+        },
+    )
+
+    assert request.profile_key == profile_key
 
 
 def test_resource_grant_expiry_must_be_future_and_timezone_aware() -> None:
