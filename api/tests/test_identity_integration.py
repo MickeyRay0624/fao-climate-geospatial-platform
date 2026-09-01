@@ -137,6 +137,62 @@ def test_reviewer_can_load_the_scoped_review_queue() -> None:
     assert payload["meta"]["total"] == len(payload["items"])
 
 
+def test_home_and_application_catalogue_are_api_backed() -> None:
+    home = client.get("/api/home", headers={"X-Dev-User-Subject": "dev-admin"})
+    assert home.status_code == 200
+    payload = home.json()
+    assert payload["workspace"]["name"]
+    assert payload["catalogue"]["visible_datasets"] >= payload["catalogue"]["published_datasets"]
+    assert {"contributor", "reviewer", "analyst", "admin"}.issubset(payload["role_cards"])
+    assert "not operational advice" in payload["disclaimer"]
+
+    modules = client.get("/api/modules", headers={"X-Dev-User-Subject": "dev-admin"})
+    assert modules.status_code == 200
+    investment = next(
+        item for item in modules.json()["items"]
+        if item["module_key"] == "investment-prioritisation"
+    )
+    assert investment["enabled"] is True
+    assert investment["required_permission"] == "apps.investment.use"
+    assert investment["owner"]
+
+
+def test_global_search_does_not_disclose_a_private_dataset_to_an_unentitled_user() -> None:
+    unique_term = f"hidden-search-{uuid4()}"
+    with SessionLocal() as session:
+        workspace = session.scalar(select(Workspace).order_by(Workspace.created_at))
+        owner = session.scalar(select(User).where(User.external_subject == "dev-contributor"))
+        dataset = CatalogDataset(
+            workspace_id=workspace.id,
+            slug=unique_term,
+            title=unique_term,
+            abstract="Temporary private search contract fixture.",
+            data_kind="table",
+            owner_user_id=owner.id,
+            visibility="PRIVATE",
+            classification="FAO_INTERNAL",
+            created_by=owner.id,
+            updated_by=owner.id,
+        )
+        session.add(dataset)
+        session.commit()
+        dataset_id = dataset.id
+    try:
+        response = client.get(
+            f"/api/search?q={unique_term}",
+            headers={"X-Dev-User-Subject": "dev-viewer"},
+        )
+        assert response.status_code == 200
+        assert response.json()["items"] == []
+        assert response.json()["meta"]["returned"] == 0
+    finally:
+        with SessionLocal() as session:
+            dataset = session.get(CatalogDataset, dataset_id)
+            if dataset:
+                session.delete(dataset)
+                session.commit()
+
+
 def test_sensitive_field_dataset_requires_scoped_access_even_when_workspace_visible() -> None:
     with SessionLocal() as session:
         workspace = session.scalar(select(Workspace).order_by(Workspace.created_at))

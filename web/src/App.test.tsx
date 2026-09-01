@@ -12,6 +12,7 @@ import {
   getDatasetGrants,
   getDevPersonas,
   getJobs,
+  getHomeDashboard,
   getModules,
 } from "./api";
 import type { Capabilities, DataHubDataset, DataHubVersion, ProcessingJob } from "./platform/types";
@@ -23,6 +24,7 @@ vi.mock("./api", async () => {
     getCapabilities: vi.fn(),
     getDevPersonas: vi.fn(),
     getJobs: vi.fn(),
+    getHomeDashboard: vi.fn(),
     getModules: vi.fn(),
     getDataHubDatasets: vi.fn(),
     getDataHubDataset: vi.fn(),
@@ -149,6 +151,13 @@ beforeEach(() => {
     items: [{ id: "user-1", external_subject: "dev-admin", display_name: "Amina Sok", email: "amina@example.invalid", status: "active", locale: "en" }],
   });
   vi.mocked(getJobs).mockResolvedValue({ items: [], meta: { total: 0 } });
+  vi.mocked(getHomeDashboard).mockResolvedValue({
+    workspace: { id: "workspace-1", name: "Cambodia Rice Resilience" },
+    catalogue: { visible_datasets: 0, published_datasets: 0, real_samples: 0, recent: [] },
+    jobs: { active: 0, failed: 0 },
+    role_cards: {},
+    disclaimer: "Demonstration boundaries apply.",
+  });
   vi.mocked(getModules).mockResolvedValue({ items: [] });
   vi.mocked(getDataHubDatasets).mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, pages: 0, sort: "-updated_at" } });
   vi.mocked(getDataHubDataset).mockResolvedValue(governedDataset);

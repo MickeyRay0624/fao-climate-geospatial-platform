@@ -56,9 +56,31 @@ export type ModuleRecord = {
   manifest_valid: boolean;
   routes: Array<{ path: string; title: string }>;
   feature_flags: Record<string, boolean>;
+  owner: string | null;
+  required_permission: string | null;
+  last_activity: string | null;
 };
 
 export type ModuleList = { items: ModuleRecord[] };
+
+export type HomeDashboard = {
+  workspace: { id: string; name: string };
+  catalogue: {
+    visible_datasets: number;
+    published_datasets: number;
+    real_samples: number;
+    recent: Array<{ id: string; title: string; data_kind: string; published: boolean; updated_at: string | null }>;
+  };
+  jobs: { active: number; failed: number };
+  role_cards: Record<string, Record<string, unknown>>;
+  disclaimer: string;
+};
+
+export type SearchResponse = {
+  query: string;
+  items: Array<{ type: string; id: string; title: string; subtitle: string; path: string }>;
+  meta: { returned: number };
+};
 
 export type DataHubDatasetSummary = {
   id: string;

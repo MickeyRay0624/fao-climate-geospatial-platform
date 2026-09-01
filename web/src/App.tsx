@@ -3,6 +3,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import AppShell, { usePlatform } from "./platform/AppShell";
 import AuditPage from "./pages/AuditPage";
+import ApplicationsPage from "./pages/ApplicationsPage";
 import CataloguePage from "./pages/CataloguePage";
 import CollectionsPage from "./pages/CollectionsPage";
 import DatasetDetailPage from "./pages/DatasetDetailPage";
@@ -11,6 +12,7 @@ import HelpPage from "./pages/HelpPage";
 import HomePage from "./pages/HomePage";
 import JobsPage from "./pages/JobsPage";
 import ReviewsPage from "./pages/ReviewsPage";
+import SearchPage from "./pages/SearchPage";
 import UploadWizardPage from "./pages/UploadWizardPage";
 import VersionDetailPage from "./pages/VersionDetailPage";
 
@@ -35,6 +37,7 @@ function PlatformRoutes() {
     <Routes>
       <Route path="/" element={<Navigate replace to="/home" />} />
       <Route path="/home" element={<HomePage />} />
+      <Route path="/search" element={<SearchPage />} />
       <Route path="/data/catalog" element={<CataloguePage />} />
       <Route path="/data/mine" element={<CataloguePage mine />} />
       <Route path="/data/collections" element={<CollectionsPage />} />
@@ -53,6 +56,7 @@ function PlatformRoutes() {
           </RequirePermission>
         }
       />
+      <Route path="/apps" element={<ApplicationsPage />} />
       <Route path="/governance/members" element={<RequirePermission permission="workspace.manage_members"><GovernancePage view="members" /></RequirePermission>} />
       <Route path="/governance/groups" element={<RequirePermission permission="workspace.manage_groups"><GovernancePage view="groups" /></RequirePermission>} />
       <Route path="/governance/roles" element={<RequirePermission permission="workspace.manage_roles"><GovernancePage view="roles" /></RequirePermission>} />

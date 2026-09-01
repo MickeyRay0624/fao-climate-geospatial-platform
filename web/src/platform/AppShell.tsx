@@ -29,6 +29,7 @@ const iconGlyph: Record<string, string> = {
   home: "⌂", database: "▦", folder: "▤", upload: "⇧", check: "✓",
   map: "⌖", users: "◉", groups: "◎", shield: "◇", audit: "≡", help: "?",
   collection: "▥",
+  apps: "⬡",
 };
 
 function AppShell({ children }: { children: ReactNode }) {
@@ -161,11 +162,11 @@ function AppShell({ children }: { children: ReactNode }) {
               className="global-search"
               onSubmit={(event) => {
                 event.preventDefault();
-                navigate(`/data/catalog?search=${encodeURIComponent(search)}`);
+                navigate(`/search?q=${encodeURIComponent(search)}`);
               }}
             >
               <span aria-hidden="true">⌕</span>
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search datasets, versions, people…" aria-label="Search platform" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search datasets, versions, runs…" aria-label="Search platform" />
               <kbd>↵</kbd>
             </form>
             <div className="topbar-actions">

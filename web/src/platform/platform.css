@@ -1407,6 +1407,34 @@ button.secondary-button {
   .comparison-evidence { grid-template-columns: repeat(2, 1fr); }
 }
 .preview-result-note { align-self: center; padding: 7px 9px; color: #7b5a20; background: #fff2d7; border: 1px solid #ead29f; border-radius: 5px; font-size: 0.62rem; font-weight: 700; }
+.home-role-grid, .applications-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin: 16px 0 24px; }
+.home-role-card { padding: 18px; background: #fff; border: 1px solid var(--platform-line); border-radius: 10px; box-shadow: var(--platform-shadow); }
+.home-role-card dl, .applications-grid dl { display: grid; gap: 7px; margin: 12px 0 0; }
+.home-role-card dl div, .applications-grid dl div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding-top: 7px; border-top: 1px solid #edf1ef; }
+.home-role-card dt, .applications-grid dt { color: var(--platform-muted); font-size: .62rem; text-transform: capitalize; }
+.home-role-card dd, .applications-grid dd { margin: 0; font-size: .7rem; font-weight: 750; text-align: right; overflow-wrap: anywhere; }
+.home-recent-runs { display: grid; gap: 6px; margin-top: 14px; }
+.home-recent-runs > strong { font-size: .65rem; }
+.home-recent-runs a, .recent-data-list a { display: grid; gap: 2px; padding: 7px 0; color: inherit; border-top: 1px solid #edf1ef; text-decoration: none; }
+.home-recent-runs span, .recent-data-list small { color: var(--platform-muted); font-size: .6rem; }
+.recent-data-card { padding: 20px; background: #fff; border: 1px solid var(--platform-line); border-radius: 10px; box-shadow: var(--platform-shadow); }
+.recent-data-card h2 { margin: 4px 0 12px; font-size: 1rem; }
+.recent-data-list { display: grid; }
+.recent-data-list span { font-size: .68rem; font-weight: 700; }
+.applications-grid { margin-top: 0; }
+.applications-grid .detail-panel { padding: 20px; }
+.applications-grid h2 { margin: 16px 0 7px; font-size: 1rem; }
+.applications-grid p, .applications-grid em { color: var(--platform-muted); font-size: .68rem; line-height: 1.5; }
+.applications-grid .planned { background: #f6f8f7; border-style: dashed; }
+.application-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.application-status small, .application-unavailable { color: var(--platform-muted); font-size: .6rem; }
+.applications-grid .platform-primary { display: inline-flex; margin-top: 16px; text-decoration: none; }
+.search-results { display: grid; gap: 9px; }
+.search-results > a { display: grid; grid-template-columns: 130px 1fr auto; align-items: center; gap: 15px; padding: 16px 18px; color: inherit; text-decoration: none; }
+.search-results > a > span { color: var(--platform-teal); font-size: .6rem; font-weight: 800; text-transform: uppercase; }
+.search-results h2 { margin: 0 0 4px; font-size: .85rem; }
+.search-results p { margin: 0; color: var(--platform-muted); font-size: .65rem; }
+.search-results b { color: var(--platform-teal); font-size: .65rem; }
 
 @media (max-width: 1180px) {
   .dataset-grid { grid-template-columns: repeat(2, 1fr); }
@@ -1463,7 +1491,7 @@ button.secondary-button {
   .home-hero h1 { font-size: 2.15rem; }
   .metric-strip { margin-right: 5px; margin-left: 5px; }
   .metric-strip article { padding: 12px; }
-  .module-cards, .dataset-grid, .home-side-column, .choice-cards, .form-grid, .boundary-grid, .governance-card-grid, .collection-grid { grid-template-columns: 1fr; }
+  .module-cards, .dataset-grid, .home-side-column, .choice-cards, .form-grid, .boundary-grid, .governance-card-grid, .collection-grid, .home-role-grid, .applications-grid { grid-template-columns: 1fr; }
   .lifecycle-cards { grid-template-columns: 1fr; }
   .lifecycle-cards article { border-top: 1px solid #e2e9e7; border-left: 0; }
   .catalogue-filters, .audit-filters { grid-template-columns: 1fr; }
@@ -1506,4 +1534,6 @@ button.secondary-button {
   .collection-members article { align-items: flex-start; flex-direction: column; }
   .dataset-table-view .dataset-card { grid-template-columns: 90px minmax(0, 1fr); }
   .dataset-table-view .dataset-card > p, .dataset-table-view .dataset-card dl { display: none; }
+  .search-results > a { grid-template-columns: 1fr auto; }
+  .search-results > a > span { grid-column: 1 / -1; }
 }

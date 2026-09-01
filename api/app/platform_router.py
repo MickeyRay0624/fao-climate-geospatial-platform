@@ -10,7 +10,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.audit_service import record_event
-from app.authorization import assert_permission
+from app.authorization import assert_permission, can_access_dataset
 from app.config import (
     ALLOW_INSECURE_DEV_FILE_SCAN,
     APP_ENV,
@@ -23,13 +23,19 @@ from app.identity import Principal, get_current_principal
 from app.jobs import celery_app, process_upload_session
 from app.platform_models import (
     AuditEvent,
+    CatalogDataset,
     CatalogDatasetVersion,
+    Collection,
     Group,
     GroupMembership,
     JobStep,
     InvestmentAnalysisRun,
+    InvestmentAnalysisInputSet,
     Module,
     ProcessingJob,
+    QualityIssue,
+    QualityRun,
+    ReviewRequest,
     Role,
     RoleAssignment,
     User,
@@ -101,6 +107,7 @@ def _navigation(principal: Principal, session: Session) -> list[dict[str, Any]]:
         {"path": "/data/collections", "title": "Collections", "section": "Data Hub", "permission": "data.catalog.enter", "icon": "collection"},
         {"path": "/data/uploads", "title": "Upload centre", "section": "Data Hub", "permission": "dataset.upload_version", "icon": "upload"},
         {"path": "/data/reviews", "title": "Reviews", "section": "Data Hub", "permission": "dataset.review", "icon": "check"},
+        {"path": "/apps", "title": "All applications", "section": "Applications", "permission": "workspace.view", "icon": "apps"},
         {"path": "/apps/investment-prioritisation/overview", "title": "Investment prioritisation", "section": "Applications", "permission": "apps.investment.use", "module": "investment-prioritisation", "icon": "map"},
         {"path": "/governance/members", "title": "Members", "section": "Governance", "permission": "workspace.manage_members", "icon": "users"},
         {"path": "/governance/groups", "title": "Groups", "section": "Governance", "permission": "workspace.manage_groups", "icon": "groups"},
@@ -140,6 +147,310 @@ def capabilities(
     }
 
 
+@core_router.get("/api/home")
+def home_dashboard(
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "workspace.view")
+    catalogue_rows = session.scalars(
+        select(CatalogDataset)
+        .where(
+            CatalogDataset.workspace_id == principal.active_workspace_id,
+            CatalogDataset.lifecycle_status != "ARCHIVED",
+        )
+        .order_by(CatalogDataset.updated_at.desc())
+    ).all()
+    visible_datasets = [
+        item
+        for item in catalogue_rows
+        if can_access_dataset(session, principal, item, "dataset.view_metadata")
+    ]
+    recent_datasets = [
+        {
+            "id": str(item.id),
+            "title": item.title,
+            "data_kind": item.data_kind,
+            "published": item.current_published_version_id is not None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        }
+        for item in visible_datasets[:5]
+    ]
+    jobs_query = select(ProcessingJob).where(
+        ProcessingJob.workspace_id == principal.active_workspace_id
+    )
+    if "jobs.view_workspace" not in principal.effective_permissions:
+        jobs_query = jobs_query.where(ProcessingJob.requested_by == principal.user_id)
+    jobs = session.scalars(jobs_query).all()
+    role_cards: dict[str, Any] = {}
+    if "dataset.create" in principal.effective_permissions:
+        role_cards["contributor"] = {
+            "draft_versions": session.scalar(
+                select(func.count(CatalogDatasetVersion.id)).where(
+                    CatalogDatasetVersion.created_by == principal.user_id,
+                    CatalogDatasetVersion.state.in_(
+                        ["DRAFT", "UPLOADING", "PROCESSING", "VALIDATION_FAILED"]
+                    ),
+                )
+            )
+            or 0,
+            "failed_or_warning_jobs": sum(
+                item.status == "FAILED"
+                or bool((item.result_json or {}).get("warnings"))
+                for item in jobs
+            ),
+            "pending_submissions": session.scalar(
+                select(func.count(CatalogDatasetVersion.id)).where(
+                    CatalogDatasetVersion.created_by == principal.user_id,
+                    CatalogDatasetVersion.state.in_(["VALIDATED", "CHANGES_REQUESTED"]),
+                )
+            )
+            or 0,
+        }
+    if {"dataset.review", "dataset.publish"} & principal.effective_permissions:
+        blocking_query = (
+            select(func.count(QualityIssue.id))
+            .join(QualityRun, QualityRun.id == QualityIssue.quality_run_id)
+            .join(
+                CatalogDatasetVersion,
+                CatalogDatasetVersion.id == QualityRun.dataset_version_id,
+            )
+            .join(CatalogDataset, CatalogDataset.id == CatalogDatasetVersion.dataset_id)
+            .where(
+                CatalogDataset.workspace_id == principal.active_workspace_id,
+                QualityIssue.severity == "BLOCKING",
+                QualityIssue.resolution_status == "OPEN",
+            )
+        )
+        role_cards["reviewer"] = {
+            "assigned_reviews": session.scalar(
+                select(func.count(ReviewRequest.id))
+                .join(
+                    CatalogDatasetVersion,
+                    CatalogDatasetVersion.id == ReviewRequest.dataset_version_id,
+                )
+                .join(CatalogDataset, CatalogDataset.id == CatalogDatasetVersion.dataset_id)
+                .where(
+                    CatalogDataset.workspace_id == principal.active_workspace_id,
+                    ReviewRequest.status.in_(["OPEN", "IN_PROGRESS"]),
+                )
+            )
+            or 0,
+            "pending_publication": session.scalar(
+                select(func.count(CatalogDatasetVersion.id))
+                .join(CatalogDataset, CatalogDataset.id == CatalogDatasetVersion.dataset_id)
+                .where(
+                    CatalogDataset.workspace_id == principal.active_workspace_id,
+                    CatalogDatasetVersion.state == "APPROVED",
+                )
+            )
+            or 0,
+            "blocking_quality_issues": session.scalar(blocking_query) or 0,
+        }
+    if "apps.investment.use" in principal.effective_permissions:
+        run_query = select(InvestmentAnalysisRun).where(
+            InvestmentAnalysisRun.workspace_id == principal.active_workspace_id
+        )
+        if "investment.run.view" not in principal.effective_permissions:
+            run_query = run_query.where(
+                InvestmentAnalysisRun.requested_by == principal.user_id
+            )
+        runs = session.scalars(
+            run_query.order_by(InvestmentAnalysisRun.requested_at.desc()).limit(5)
+        ).all()
+        role_cards["analyst"] = {
+            "recent_runs": [
+                {
+                    "id": str(item.id),
+                    "status": item.status,
+                    "result_count": item.result_count,
+                    "requested_at": item.requested_at.isoformat(),
+                }
+                for item in runs
+            ],
+            "active_or_failed_runs": session.scalar(
+                select(func.count(InvestmentAnalysisRun.id)).where(
+                    InvestmentAnalysisRun.workspace_id == principal.active_workspace_id,
+                    InvestmentAnalysisRun.status.in_(
+                        ["queued", "running", "failed", "cancel_requested"]
+                    ),
+                )
+            )
+            or 0,
+            "locked_input_sets": session.scalar(
+                select(func.count(InvestmentAnalysisInputSet.id)).where(
+                    InvestmentAnalysisInputSet.workspace_id == principal.active_workspace_id,
+                    InvestmentAnalysisInputSet.status == "LOCKED",
+                )
+            )
+            or 0,
+        }
+    if "workspace.manage_members" in principal.effective_permissions:
+        services = dependency_health()
+        role_cards["admin"] = {
+            "members": session.scalar(
+                select(func.count(WorkspaceMembership.id)).where(
+                    WorkspaceMembership.workspace_id == principal.active_workspace_id,
+                    WorkspaceMembership.status == "active",
+                )
+            )
+            or 0,
+            "enabled_modules": len(principal.enabled_modules),
+            "services": {"database": "ok", **services},
+            "active_jobs": sum(item.status in {"QUEUED", "RUNNING"} for item in jobs),
+            "failed_jobs": sum(item.status == "FAILED" for item in jobs),
+            "scanner_mode": (
+                "development_bypass"
+                if APP_ENV in {"development", "test"} and ALLOW_INSECURE_DEV_FILE_SCAN
+                else "fail_closed_or_operational"
+            ),
+        }
+    return {
+        "workspace": {
+            "id": str(principal.active_workspace_id),
+            "name": principal.workspace_name,
+        },
+        "catalogue": {
+            "visible_datasets": len(visible_datasets),
+            "published_datasets": sum(
+                item.current_published_version_id is not None for item in visible_datasets
+            ),
+            "real_samples": sum(
+                item.licence_code == "UNCONFIRMED-SOURCE-LICENCE"
+                for item in visible_datasets
+            ),
+            "recent": recent_datasets,
+        },
+        "jobs": {
+            "active": sum(item.status in {"QUEUED", "RUNNING"} for item in jobs),
+            "failed": sum(item.status == "FAILED" for item in jobs),
+        },
+        "role_cards": role_cards,
+        "disclaimer": (
+            "Real source samples, synthetic analysis data, illustrative methods and "
+            "demonstration workflows are labelled separately and are not operational advice."
+        ),
+    }
+
+
+@core_router.get("/api/search")
+def platform_search(
+    q: str = Query(min_length=2, max_length=200),
+    page_size: int = Query(default=25, ge=1, le=50),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "workspace.view")
+    term = f"%{q.strip()}%"
+    results: list[dict[str, Any]] = []
+    datasets = session.scalars(
+        select(CatalogDataset).where(
+            CatalogDataset.workspace_id == principal.active_workspace_id,
+            CatalogDataset.lifecycle_status != "ARCHIVED",
+            or_(
+                CatalogDataset.title.ilike(term),
+                CatalogDataset.abstract.ilike(term),
+                CatalogDataset.slug.ilike(term),
+            ),
+        )
+    ).all()
+    for dataset in datasets:
+        if not can_access_dataset(session, principal, dataset, "dataset.view_metadata"):
+            continue
+        results.append(
+            {
+                "type": "dataset",
+                "id": str(dataset.id),
+                "title": dataset.title,
+                "subtitle": f"{dataset.data_kind} · {dataset.classification}",
+                "path": f"/data/datasets/{dataset.id}",
+            }
+        )
+    version_rows = session.execute(
+        select(CatalogDatasetVersion, CatalogDataset)
+        .join(CatalogDataset, CatalogDataset.id == CatalogDatasetVersion.dataset_id)
+        .where(
+            CatalogDataset.workspace_id == principal.active_workspace_id,
+            or_(
+                CatalogDatasetVersion.version_label.ilike(term),
+                CatalogDatasetVersion.profile_key.ilike(term),
+            ),
+        )
+        .limit(page_size)
+    ).all()
+    for version, dataset in version_rows:
+        if not can_access_dataset(session, principal, dataset, "dataset.view_metadata"):
+            continue
+        results.append(
+            {
+                "type": "dataset_version",
+                "id": str(version.id),
+                "title": f"{dataset.title} · {version.version_label}",
+                "subtitle": f"{version.profile_key} · {version.state}",
+                "path": f"/data/datasets/{dataset.id}/versions/{version.id}",
+            }
+        )
+    collections = session.scalars(
+        select(Collection).where(
+            Collection.workspace_id == principal.active_workspace_id,
+            Collection.status == "ACTIVE",
+            or_(Collection.title.ilike(term), Collection.description.ilike(term)),
+        )
+    ).all()
+    results.extend(
+        {
+            "type": "collection",
+            "id": str(item.id),
+            "title": item.title,
+            "subtitle": "Exact-version collection",
+            "path": f"/data/collections/{item.id}",
+        }
+        for item in collections
+    )
+    if "apps.investment.use" in principal.effective_permissions:
+        input_sets = session.scalars(
+            select(InvestmentAnalysisInputSet).where(
+                InvestmentAnalysisInputSet.workspace_id == principal.active_workspace_id,
+                or_(
+                    InvestmentAnalysisInputSet.name.ilike(term),
+                    InvestmentAnalysisInputSet.label.ilike(term),
+                ),
+            )
+        ).all()
+        results.extend(
+            {
+                "type": "investment_input_set",
+                "id": str(item.id),
+                "title": item.label,
+                "subtitle": f"{item.profile_mode} · {item.status}",
+                "path": f"/apps/investment-prioritisation/input-sets/{item.id}",
+            }
+            for item in input_sets
+            if item.created_by == principal.user_id
+            or "investment.run.view" in principal.effective_permissions
+        )
+        try:
+            run_id = UUID(q.strip())
+        except ValueError:
+            run_id = None
+        if run_id:
+            run = session.get(InvestmentAnalysisRun, run_id)
+            if run and run.workspace_id == principal.active_workspace_id and (
+                run.requested_by == principal.user_id
+                or "investment.run.view" in principal.effective_permissions
+            ):
+                results.append(
+                    {
+                        "type": "investment_run",
+                        "id": str(run.id),
+                        "title": f"Investment run {str(run.id)[:8]}",
+                        "subtitle": f"{run.status} · {run.result_count} results",
+                        "path": f"/apps/investment-prioritisation/runs/{run.id}",
+                    }
+                )
+    return {"query": q, "items": results[:page_size], "meta": {"returned": min(len(results), page_size)}}
+
+
 @core_router.get("/api/modules")
 def modules(
     principal: Principal = Depends(get_current_principal),
@@ -152,8 +463,18 @@ def modules(
         .where(WorkspaceModule.workspace_id == principal.active_workspace_id)
         .order_by(Module.name)
     ).all()
-    return {
-        "items": [
+    items: list[dict[str, Any]] = []
+    for module, workspace_module in rows:
+        last_activity = session.scalar(
+            select(AuditEvent.event_time)
+            .where(
+                AuditEvent.workspace_id == principal.active_workspace_id,
+                AuditEvent.action.ilike(f"{module.module_key.split('-')[0]}%"),
+            )
+            .order_by(AuditEvent.event_time.desc())
+            .limit(1)
+        )
+        items.append(
             {
                 "id": str(module.id),
                 "module_key": module.module_key,
@@ -166,10 +487,15 @@ def modules(
                 "manifest_valid": module.manifest_valid,
                 "routes": module.manifest.get("routes", []),
                 "feature_flags": workspace_module.feature_flags,
+                "owner": module.manifest.get("ownership", {}).get("product_owner"),
+                "required_permission": (
+                    module.manifest.get("permissions", {})
+                    .get("required_to_enter", [None])[0]
+                ),
+                "last_activity": last_activity.isoformat() if last_activity else None,
             }
-            for module, workspace_module in rows
-        ]
-    }
+        )
+    return {"items": items}
 
 
 @core_router.get("/api/dev/personas")

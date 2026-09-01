@@ -27,10 +27,12 @@ import type {
   GovernanceGroups,
   GovernanceMembers,
   GovernanceRoles,
+  HomeDashboard,
   JobList,
   ModuleList,
   Principal,
   ReviewList,
+  SearchResponse,
   UploadSession,
   VersionPreview,
 } from "./platform/types";
@@ -145,6 +147,14 @@ export function getDevPersonas(): Promise<DevPersonaList> {
 
 export function getModules(): Promise<ModuleList> {
   return requestJson<ModuleList>("/api/modules");
+}
+
+export function getHomeDashboard(): Promise<HomeDashboard> {
+  return requestJson("/api/home");
+}
+
+export function searchPlatform(query: string): Promise<SearchResponse> {
+  return requestJson(`/api/search?q=${encodeURIComponent(query)}&page_size=50`);
 }
 
 export function getDataHubDatasets(params: URLSearchParams = new URLSearchParams()): Promise<DataHubDatasetList> {
