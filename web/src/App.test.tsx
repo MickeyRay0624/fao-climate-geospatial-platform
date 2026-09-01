@@ -275,7 +275,7 @@ describe("platform shell and route policy", () => {
     renderRoute("/governance/system-health");
 
     expect(await screen.findByRole("heading", { name: "System health" })).toBeInTheDocument();
-    expect(screen.getByText("LOCAL EVIDENCE PRESENT")).toBeInTheDocument();
+    expect(await screen.findByText("LOCAL EVIDENCE PRESENT")).toBeInTheDocument();
     expect(screen.getByText("No secrets exposed")).toBeInTheDocument();
   });
 
