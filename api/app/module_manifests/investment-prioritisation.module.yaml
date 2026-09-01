@@ -3,7 +3,7 @@ contract_version: "1.0"
 module:
   key: investment-prioritisation
   name: Investment & Extension Prioritisation
-  version: 1.0.0
+  version: 2.0.0
   status: beta
   description: Versioned spatial prioritisation for climate-resilient investment and extension targeting.
 
@@ -35,6 +35,12 @@ routes:
     layout: desktop
     offline_capable: false
     navigation: secondary
+  - path: /apps/investment-prioritisation/input-sets/:inputSetId
+    title: Input set
+    permissions: [apps.investment.use]
+    layout: desktop
+    offline_capable: false
+    navigation: hidden
   - path: /apps/investment-prioritisation/runs
     title: Run history
     permissions: [apps.investment.use, investment.run.view]
@@ -54,8 +60,14 @@ routes:
     offline_capable: false
     navigation: primary
   - path: /apps/investment-prioritisation/methods
-    title: Methods and scenarios
-    permissions: [apps.investment.use, investment.method.edit]
+    title: Methods
+    permissions: [apps.investment.use]
+    layout: desktop
+    offline_capable: false
+    navigation: secondary
+  - path: /apps/investment-prioritisation/scenarios
+    title: Scenarios
+    permissions: [apps.investment.use]
     layout: desktop
     offline_capable: false
     navigation: secondary
@@ -125,7 +137,7 @@ data:
       selection_mode: exact_version
       allowed_states: [validated, published]
       multiple: false
-      quality_profile: legacy-priority-bundle@1.0
+      quality_profile: analysis-ready-priority-bundle@1.0
       notes: Temporary compatibility profile for the existing synthetic MVP during migration.
   outputs:
     - role: priority_result
@@ -136,26 +148,15 @@ data:
       default_visibility: workspace
       default_classification: fao_internal
       review_required: true
-      representations: [postgis_table, geoparquet, geojson_download, csv_download]
+      representations: [postgis_table, geojson_download, csv_download, run_manifest]
       retention_policy: retain-while-referenced
       notes: Includes area code, score, rank, eligibility, band, contributions and run metadata.
-    - role: analysis_report
-      profile: analysis-report
-      version: "1.0"
-      register_in_catalog: false
-      lineage_required: true
-      default_visibility: restricted
-      default_classification: fao_internal
-      review_required: false
-      representations: [pdf_report]
-      retention_policy: workspace-analysis-default
-      notes: Report is attached to the run or result dataset after review.
 
 persistence:
   database_schema: investment
   cross_schema_writes: false
   object_prefixes:
-    - exports/{workspace_id}/{job_id}/
+    - catalog/{workspace_id}/datasets/{dataset_id}/versions/{version_id}/derived/
   migrations:
     tool: alembic
     ownership: module
@@ -166,13 +167,7 @@ jobs:
     idempotent: true
     max_attempts: 2
     cancellable: true
-    visible_steps: [validate-inputs, prepare, score, materialise-results, register-output]
-  - type: investment:export-run:v1
-    queue: exports
-    idempotent: true
-    max_attempts: 3
-    cancellable: true
-    visible_steps: [authorise, render, store, sign-download]
+    visible_steps: [validate-inputs, prepare, score, materialise-results, register-output, finalise]
 
 events:
   emits:
@@ -187,9 +182,14 @@ audit:
   - investment.analysis.create
   - investment.analysis.cancel
   - investment.analysis.export
+  - investment.analysis.compare
+  - investment.analysis.migrate
   - investment.input_set.lock
+  - investment.method.submit
   - investment.method.approve
+  - investment.scenario.submit
   - investment.scenario.approve
+  - investment.result.register
   - investment.result.submit
 
 security:
@@ -220,6 +220,9 @@ offline:
   device_revoke_clears_cache: true
 
 feature_flags:
+  - key: investment.native_phase_2a
+    default: true
+    description: Use investment.* as the only write authority and native asynchronous runs.
   - key: investment.legacy_bundle_input
     default: true
     description: Accept the existing analysis-ready bundle during migration.

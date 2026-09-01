@@ -4,6 +4,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from geoalchemy2 import Geometry
+from geoalchemy2.elements import WKBElement
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -11,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -632,4 +635,364 @@ class IdempotencyRecord(Base):
     path: Mapped[str] = mapped_column(String(500), nullable=False)
     response_status: Mapped[int] = mapped_column(Integer, nullable=False)
     response_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InvestmentIndicatorDefinition(Base):
+    __tablename__ = "indicator_definitions"
+    __table_args__ = ({"schema": "investment"},)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    code: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    unit: Mapped[str] = mapped_column(String(120), nullable=False)
+    direction: Mapped[str] = mapped_column(String(64), nullable=False)
+    expected_profile: Mapped[str] = mapped_column(String(160), nullable=False)
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    state: Mapped[str] = mapped_column(String(32), default="APPROVED", nullable=False, index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    updated_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    row_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class InvestmentMethodDefinition(Base):
+    __tablename__ = "method_definitions"
+    __table_args__ = ({"schema": "investment"},)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    method_key: Mapped[str] = mapped_column(String(160), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    owner_group_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="ACTIVE", nullable=False, index=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    updated_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    row_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class InvestmentMethodVersion(Base):
+    __tablename__ = "method_versions"
+    __table_args__ = (
+        UniqueConstraint("method_id", "version_label", name="uq_investment_method_version"),
+        CheckConstraint(
+            "state IN ('DRAFT','UNDER_REVIEW','APPROVED','RETIRED')",
+            name="ck_investment_method_version_state",
+        ),
+        CheckConstraint(
+            "approved_by IS NULL OR approved_by <> created_by",
+            name="ck_investment_method_no_self_approval",
+        ),
+        {"schema": "investment"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    method_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.method_definitions.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    version_label: Mapped[str] = mapped_column(String(80), nullable=False)
+    state: Mapped[str] = mapped_column(String(32), default="DRAFT", nullable=False, index=True)
+    specification_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    implementation_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    code_ref: Mapped[str] = mapped_column(String(240), nullable=False)
+    container_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    validation_evidence: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    disclaimer: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    submitted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    row_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class InvestmentScenario(Base):
+    """A logical scenario and immutable version in one governed record."""
+
+    __tablename__ = "scenarios"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "scenario_key", "version_label", name="uq_investment_scenario_version"
+        ),
+        CheckConstraint(
+            "state IN ('DRAFT','UNDER_REVIEW','APPROVED','RETIRED')",
+            name="ck_investment_scenario_state",
+        ),
+        CheckConstraint(
+            "approved_by IS NULL OR approved_by <> created_by",
+            name="ck_investment_scenario_no_self_approval",
+        ),
+        {"schema": "investment"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    scenario_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    version_label: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    method_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.method_versions.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    state: Mapped[str] = mapped_column(String(32), default="DRAFT", nullable=False, index=True)
+    parameters_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    disclaimer: Mapped[str] = mapped_column(Text, nullable=False)
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    submitted_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    approved_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    row_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class InvestmentScenarioParameter(Base):
+    __tablename__ = "scenario_parameters"
+    __table_args__ = (
+        UniqueConstraint("scenario_id", "parameter_key", name="uq_investment_scenario_parameter"),
+        {"schema": "investment"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    scenario_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.scenarios.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    parameter_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    numeric_value: Mapped[float] = mapped_column(Float, nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InvestmentAnalysisInputSet(Base):
+    __tablename__ = "analysis_input_sets"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('DRAFT','VALIDATED','LOCKED','RETIRED')",
+            name="ck_investment_input_set_status",
+        ),
+        CheckConstraint(
+            "status NOT IN ('LOCKED','RETIRED') OR checksum IS NOT NULL",
+            name="ck_investment_locked_input_checksum",
+        ),
+        {"schema": "investment"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(240), nullable=False)
+    label: Mapped[str] = mapped_column(String(300), nullable=False)
+    profile_mode: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="DRAFT", nullable=False, index=True)
+    study_area_ref: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    run_mode_compatibility: Mapped[list[str]] = mapped_column(JSONB, default=lambda: ["FORMAL"])
+    strictest_classification: Mapped[str] = mapped_column(String(32), default="FAO_INTERNAL")
+    readiness_result: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    checksum: Mapped[str | None] = mapped_column(String(64))
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    locked_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    retired_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    row_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    locked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class InvestmentAnalysisInputMember(Base):
+    __tablename__ = "analysis_input_members"
+    __table_args__ = (
+        UniqueConstraint("input_set_id", "ordinal", name="uq_investment_input_member_ordinal"),
+        {"schema": "investment"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    input_set_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.analysis_input_sets.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    dataset_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalog.dataset_versions.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    representation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("catalog.representations.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    input_role: Mapped[str] = mapped_column(String(120), nullable=False)
+    indicator_code: Mapped[str | None] = mapped_column(String(64), index=True)
+    join_key: Mapped[str] = mapped_column(String(120), default="area_code")
+    value_field: Mapped[str | None] = mapped_column(String(120))
+    geometry_field: Mapped[str | None] = mapped_column(String(120))
+    unit: Mapped[str | None] = mapped_column(String(120))
+    direction: Mapped[str | None] = mapped_column(String(64))
+    time_coverage: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    required: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    transform_config: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InvestmentAnalysisRun(Base):
+    __tablename__ = "analysis_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "requested_by", "idempotency_key", name="uq_investment_run_idempotency"
+        ),
+        UniqueConstraint("legacy_run_id", name="uq_investment_legacy_run_id"),
+        CheckConstraint(
+            "status IN ('queued','running','succeeded','succeeded_with_warnings','failed',"
+            "'cancel_requested','cancelled')",
+            name="ck_investment_analysis_run_status",
+        ),
+        Index("ix_investment_runs_workspace_status_requested", "workspace_id", "status", "requested_at"),
+        {"schema": "investment"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    input_set_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.analysis_input_sets.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    method_version_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.method_versions.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    scenario_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.scenarios.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    run_mode: Mapped[str] = mapped_column(String(32), default="FORMAL", nullable=False)
+    parameters_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    input_set_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    method_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    scenario_checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    requested_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    processing_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), unique=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="queued", nullable=False, index=True)
+    progress: Mapped[float] = mapped_column(Float, default=0, nullable=False)
+    current_step: Mapped[str] = mapped_column(String(120), default="queued")
+    code_ref: Mapped[str] = mapped_column(String(240), nullable=False)
+    worker_task_version: Mapped[str] = mapped_column(String(120), nullable=False)
+    container_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    warnings_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    exclusions_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, default=list)
+    failure_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    output_dataset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    output_dataset_version_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    result_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    result_checksum: Mapped[str | None] = mapped_column(String(64))
+    migration_source: Mapped[str | None] = mapped_column(String(64), index=True)
+    legacy_run_id: Mapped[int | None] = mapped_column(Integer)
+    correlation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    row_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class InvestmentAnalysisRunInput(Base):
+    __tablename__ = "analysis_run_inputs"
+    __table_args__ = (
+        UniqueConstraint("run_id", "ordinal", name="uq_investment_run_input_ordinal"),
+        {"schema": "investment"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.analysis_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    input_member_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    dataset_version_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    representation_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    input_role: Mapped[str] = mapped_column(String(120), nullable=False)
+    indicator_code: Mapped[str | None] = mapped_column(String(64))
+    object_key: Mapped[str | None] = mapped_column(String(1000))
+    object_sha256: Mapped[str | None] = mapped_column(String(64))
+    representation_type: Mapped[str] = mapped_column(String(80), nullable=False)
+    representation_locator: Mapped[str] = mapped_column(String(1000), nullable=False)
+    config_snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InvestmentPriorityResult(Base):
+    __tablename__ = "priority_results"
+    __table_args__ = (
+        UniqueConstraint("run_id", "area_code", name="uq_investment_run_area_result"),
+        Index("ix_investment_priority_results_run_rank", "run_id", "rank"),
+        Index("ix_investment_priority_results_run_band", "run_id", "priority_band"),
+        {"schema": "investment"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.analysis_runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    area_code: Mapped[str] = mapped_column(String(120), nullable=False)
+    area_name: Mapped[str] = mapped_column(String(300), nullable=False)
+    admin_level: Mapped[str | None] = mapped_column(String(120))
+    province: Mapped[str | None] = mapped_column(String(200))
+    population: Mapped[int | None] = mapped_column(Integer)
+    rice_area_ha: Mapped[float] = mapped_column(Float, nullable=False)
+    data_quality: Mapped[float | None] = mapped_column(Float)
+    geom: Mapped[WKBElement | None] = mapped_column(
+        Geometry("MULTIPOLYGON", srid=4326, spatial_index=True), nullable=True
+    )
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    rank: Mapped[int | None] = mapped_column(Integer)
+    eligible: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    priority_band: Mapped[str] = mapped_column(String(32), nullable=False)
+    contributions_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    indicators_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    missing_indicators: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    completeness: Mapped[float] = mapped_column(Float, nullable=False)
+    quality_adjustment: Mapped[float] = mapped_column(Float, nullable=False)
+    source_quality_flags: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class InvestmentRunComparison(Base):
+    __tablename__ = "run_comparisons"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "created_by", "idempotency_key", name="uq_investment_comparison_idempotency"
+        ),
+        {"schema": "investment"},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    left_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.analysis_runs.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    right_run_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investment.analysis_runs.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    compatibility_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    differences_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    area_results_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

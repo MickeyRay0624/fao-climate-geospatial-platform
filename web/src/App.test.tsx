@@ -32,7 +32,7 @@ vi.mock("./api", async () => {
 });
 
 vi.mock("./modules/investment/InvestmentPage", () => ({
-  default: () => <section><h1>Legacy investment module test surface</h1></section>,
+  default: () => <section><h1>Native investment module test surface</h1></section>,
 }));
 
 const principal = {
@@ -174,14 +174,14 @@ describe("platform shell and route policy", () => {
     expect(screen.getByText("403")).toBeInTheDocument();
   });
 
-  it("keeps the legacy investment route mounted behind its capability", async () => {
+  it("mounts the native investment route behind its capability", async () => {
     vi.mocked(getCapabilities).mockResolvedValue(capabilities(
       ["workspace.view", "apps.investment.use"],
       [nav.home, nav.investment],
     ));
     renderRoute("/apps/investment-prioritisation/overview");
 
-    expect(await screen.findByRole("heading", { name: "Legacy investment module test surface" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Native investment module test surface" })).toBeInTheDocument();
   });
 });
 

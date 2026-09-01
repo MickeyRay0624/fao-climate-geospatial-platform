@@ -53,3 +53,30 @@ Failed and negative-control resources are deliberately lifecycle-archived, not d
 ## Rollback position
 
 The Alembic downgrade aborts intentionally because backfill and governance/audit history must not be silently discarded. Rollback means stopping application writes, preserving a fresh incident snapshot, and restoring the verified pre-migration PostgreSQL dump together with the matching MinIO inventory. See `docs/runbooks/BACKUP_AND_RESTORE.md`.
+
+## Phase 2A investment native migration
+
+- Captured: 2026-08-31
+- Baseline: `backups/pre-investment-native-migration-20260831T081639Z/` (Git-ignored)
+- Upgrade: `20260831_0002` → `20260831_0003`
+
+| Metric | Before | After verification | Status |
+|---|---:|---:|---|
+| legacy areas | 111 | 111 | PASS |
+| legacy indicator values | 777 | 777 | PASS |
+| legacy runs | 13 | 13 | PASS |
+| legacy results | 1,443 | 1,443 | PASS |
+| migrated native runs | 0 | 13 | PASS |
+| migrated native results | 0 | 1,443 | PASS |
+| migrated output versions | 0 | 13 | PASS |
+| migrated output assets | 0 | 39 | PASS |
+| native input sets | 0 | 2 locked | PASS |
+| source object size | 54,213 | 54,213 | PASS |
+| source SHA-256 | `c30bb60…34df9b` | same | PASS |
+| fixed rank 1 | Prey Veng Demo Commune 03 / 65.32 | exact | PASS |
+
+The historical command maps legacy run/result IDs to stable UUID5 IDs, copies values and geometry exactly, records `unknown/not_recorded` for unavailable execution metadata, and registers deterministic assets. First current/restored-dump execution created 13/1,443/39; the second created zero. Row-level verification compares IDs, scores, ranks, eligibility, bands, contributions, values and source checksum.
+
+Clean bootstrap to `20260831_0003`, seed and backfill also passed with zero historical runs, proving the migration does not assume legacy rows exist. A restored pre-change dump upgraded and reconciled independently before its exact temporary database was removed.
+
+One explicit live separate-layer E2E run was then retained as governed evidence. Therefore the current development database contains 14 native runs, 1,554 native results, 14 output versions, 42 associated output assets and 35 analysis-lineage edges. These extra 111 results are not legacy reconciliation rows and do not alter any legacy count.

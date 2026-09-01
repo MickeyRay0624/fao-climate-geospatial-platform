@@ -235,6 +235,173 @@ def validate_generic_table(filename: str, payload: bytes) -> ValidationResult:
     )
 
 
+def validate_administrative_boundary(filename: str, payload: bytes) -> ValidationResult:
+    base = validate_generic_vector(filename, payload)
+    issues = list(base.issues)
+    try:
+        document = json.loads(payload.decode("utf-8-sig"))
+        features = document.get("features", []) if isinstance(document, dict) else []
+    except Exception:
+        features = []
+    required = {"area_code", "area_name", "admin_level"}
+    missing_fields = sorted(required - set(base.schema.get("fields", [])))
+    if missing_fields:
+        issues.append(
+            ValidationIssue(
+                "BOUNDARY_REQUIRED_FIELDS",
+                "Stable administrative identifiers",
+                "BLOCKING",
+                f"Missing fields: {', '.join(missing_fields)}",
+                len(missing_fields),
+            )
+        )
+    codes = [str((feature.get("properties") or {}).get("area_code", "")).strip() for feature in features]
+    empty_codes = sum(not code for code in codes)
+    duplicates = sorted({code for code in codes if code and codes.count(code) > 1})
+    if empty_codes:
+        issues.append(
+            ValidationIssue(
+                "BOUNDARY_AREA_CODE_MISSING", "Non-empty area codes", "BLOCKING",
+                f"{empty_codes} boundary features have no area_code.", empty_codes,
+            )
+        )
+    if duplicates:
+        issues.append(
+            ValidationIssue(
+                "BOUNDARY_AREA_CODE_DUPLICATE", "Unique area codes", "BLOCKING",
+                f"Duplicate area codes: {', '.join(duplicates[:10])}", len(duplicates),
+            )
+        )
+    geometry_types = set(base.schema.get("geometry_types", []))
+    invalid_types = geometry_types - {"Polygon", "MultiPolygon"}
+    if invalid_types:
+        issues.append(
+            ValidationIssue(
+                "BOUNDARY_GEOMETRY_TYPE", "Polygonal administrative geometry", "BLOCKING",
+                f"Unsupported geometry types: {', '.join(sorted(invalid_types))}", len(invalid_types),
+            )
+        )
+    return ValidationResult(
+        "administrative-boundary@1.0",
+        base.record_count,
+        {**base.schema, "required_fields": sorted(required), "join_key": "area_code"},
+        base.preview,
+        "administrative_boundary",
+        issues,
+        bbox=base.bbox,
+        crs=base.crs,
+        geometry_type=base.geometry_type,
+    )
+
+
+def _normalised_indicator_rows(filename: str, payload: bytes) -> tuple[list[dict[str, Any]], str]:
+    if Path(filename).suffix.lower() in {".geojson", ".json"}:
+        document = json.loads(payload.decode("utf-8-sig"))
+        if not isinstance(document, dict) or document.get("type") != "FeatureCollection":
+            raise ValueError("Indicator GeoJSON must be a FeatureCollection")
+        return [dict(feature.get("properties") or {}) for feature in document.get("features", [])], "geojson"
+    text = payload.decode("utf-8-sig")
+    return [dict(row) for row in csv.DictReader(io.StringIO(text))], "csv"
+
+
+def validate_normalised_indicator_layer(filename: str, payload: bytes) -> ValidationResult:
+    issues: list[ValidationIssue] = []
+    try:
+        rows, format_name = _normalised_indicator_rows(filename, payload)
+    except Exception as error:
+        return ValidationResult(
+            "normalised-indicator-layer@1.0", 0, {}, None, "normalised_indicator_table",
+            [ValidationIssue("INDICATOR_NOT_PARSEABLE", "Parseable indicator layer", "BLOCKING", str(error), 1)],
+        )
+    required = {
+        "area_code", "value", "indicator_code", "unit", "direction", "time_start", "time_end"
+    }
+    fields = set().union(*(row.keys() for row in rows)) if rows else set()
+    missing_fields = sorted(required - fields)
+    if missing_fields:
+        issues.append(
+            ValidationIssue(
+                "INDICATOR_REQUIRED_FIELDS", "Declared indicator contract", "BLOCKING",
+                f"Missing fields: {', '.join(missing_fields)}", len(missing_fields),
+            )
+        )
+    codes = [str(row.get("area_code", "")).strip() for row in rows]
+    duplicate_codes = sorted({code for code in codes if code and codes.count(code) > 1})
+    if any(not code for code in codes):
+        count = sum(not code for code in codes)
+        issues.append(
+            ValidationIssue("INDICATOR_AREA_CODE_MISSING", "Non-empty join keys", "BLOCKING", f"{count} rows have no area_code.", count)
+        )
+    if duplicate_codes:
+        issues.append(
+            ValidationIssue(
+                "INDICATOR_AREA_CODE_DUPLICATE", "Unique join keys", "BLOCKING",
+                f"Duplicate area codes: {', '.join(duplicate_codes[:10])}", len(duplicate_codes),
+            )
+        )
+    out_of_range = 0
+    missing_values = 0
+    for row in rows:
+        raw = row.get("value")
+        if raw is None or str(raw).strip() == "":
+            missing_values += 1
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            out_of_range += 1
+            continue
+        if not 0 <= value <= 1:
+            out_of_range += 1
+    if out_of_range:
+        issues.append(
+            ValidationIssue(
+                "INDICATOR_VALUE_RANGE", "Pre-normalised 0-1 values", "BLOCKING",
+                f"{out_of_range} values are non-numeric or outside 0-1.", out_of_range,
+            )
+        )
+    if missing_values:
+        issues.append(
+            ValidationIssue(
+                "INDICATOR_VALUES_MISSING", "Declared missing values", "WARNING",
+                f"{missing_values} values are missing and will use the approved method policy.", missing_values,
+            )
+        )
+    indicator_codes = sorted({str(row.get("indicator_code", "")).strip() for row in rows if row.get("indicator_code")})
+    directions = sorted({str(row.get("direction", "")).strip() for row in rows if row.get("direction")})
+    units = sorted({str(row.get("unit", "")).strip() for row in rows if row.get("unit")})
+    if len(indicator_codes) != 1:
+        issues.append(
+            ValidationIssue("INDICATOR_CODE_INCONSISTENT", "One indicator per layer", "BLOCKING", "A layer must declare exactly one indicator_code.", len(indicator_codes))
+        )
+    if directions != ["higher_is_priority"]:
+        issues.append(
+            ValidationIssue("INDICATOR_DIRECTION_UNSUPPORTED", "Declared priority direction", "BLOCKING", "Phase 2A accepts higher_is_priority layers only.", len(directions))
+        )
+    if len(units) != 1:
+        issues.append(
+            ValidationIssue("INDICATOR_UNIT_INCONSISTENT", "One declared unit", "BLOCKING", "A layer must declare exactly one unit.", len(units))
+        )
+    schema = {
+        "format": format_name.upper(),
+        "fields": sorted(fields),
+        "record_count": len(rows),
+        "indicator_code": indicator_codes[0] if len(indicator_codes) == 1 else None,
+        "unit": units[0] if len(units) == 1 else None,
+        "direction": directions[0] if len(directions) == 1 else None,
+        "join_key": "area_code",
+        "value_field": "value",
+    }
+    return ValidationResult(
+        "normalised-indicator-layer@1.0",
+        len(rows),
+        schema,
+        rows[:20],
+        "normalised_indicator_table",
+        issues,
+    )
+
+
 DOCUMENT_EXTENSIONS = {".pdf", ".docx", ".md", ".txt"}
 
 
@@ -264,6 +431,10 @@ def validate_file(profile_key: str, filename: str, payload: bytes, media_type: s
         return validate_generic_vector(filename, payload)
     if profile_key == "generic-table@1.0":
         return validate_generic_table(filename, payload)
+    if profile_key == "administrative-boundary@1.0":
+        return validate_administrative_boundary(filename, payload)
+    if profile_key == "normalised-indicator-layer@1.0":
+        return validate_normalised_indicator_layer(filename, payload)
     if profile_key == "document@1.0":
         return validate_document(filename, payload, media_type)
     raise ValueError(f"Unsupported validation profile: {profile_key}")

@@ -78,7 +78,7 @@ The 2026-08-31 baseline was verified this way: 111 areas, 777 indicators, 13 run
 5. Restore to a new database/bucket or controlled replacement target, never by improvising over the only copy.
 6. Reconfigure the application to the verified target, run read-only reconciliation, then reopen writes.
 
-Alembic downgrade does not replace this procedure. The Phase 1 migration deliberately refuses destructive downgrade so that backfilled mappings, audit, and governance records cannot disappear silently.
+Alembic downgrade does not replace this procedure. Phase 1 and Phase 2A deliberately refuse destructive downgrade so that mappings, immutable analysis/output evidence, audit, and governance records cannot disappear silently. The verified Phase 2A snapshot is `backups/pre-investment-native-migration-20260831T081639Z/` (Git-ignored); use the investment recovery runbook for its additional reconciliation checks.
 
 ## MinIO recovery note
 

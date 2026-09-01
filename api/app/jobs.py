@@ -47,6 +47,10 @@ celery_app.conf.update(
     broker_connection_retry_on_startup=True,
     timezone="UTC",
     enable_utc=True,
+    task_routes={
+        "catalog:validate-version:v1": {"queue": "celery"},
+        "investment:run-prioritisation:v1": {"queue": "geospatial-analysis"},
+    },
 )
 
 
@@ -367,3 +371,8 @@ def process_upload_session(self, upload_session_id: str, job_id: str, correlatio
             session.commit()
             logger.exception("Data Hub processing failed", extra={"correlation_id": correlation_id})
             return {"status": "failed", "error_code": job.error_code if job else "PROCESSING_FAILED"}
+
+
+# Import after celery_app and the shared step helper are defined. The worker is
+# launched with app.jobs:celery_app, so this explicit registration is required.
+from app.investment import tasks as investment_tasks  # noqa: E402,F401

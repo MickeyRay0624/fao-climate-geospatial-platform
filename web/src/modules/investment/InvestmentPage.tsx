@@ -1,268 +1,257 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { Link, Navigate, Route, Routes, useNavigate, useParams } from "react-router-dom";
 
 import {
-  getAvailableDataVersions,
-  getCatalog,
-  getDataCatalog,
-  runAnalysis,
-  runAnalysisPreview,
+  cancelInvestmentRun,
+  createInvestmentComparison,
+  createInvestmentInputSet,
+  createInvestmentRun,
+  getInvestmentAssets,
+  getInvestmentAudit,
+  getInvestmentDataProfiles,
+  getInvestmentInputSet,
+  getInvestmentInputSets,
+  getInvestmentLineage,
+  getInvestmentMethods,
+  getInvestmentOverview,
+  getInvestmentResults,
+  getInvestmentRun,
+  getInvestmentRuns,
+  getInvestmentScenarios,
+  lockInvestmentInputSet,
+  validateInvestmentInputSet,
 } from "../../api";
-import ComparisonModal from "../../components/ComparisonModal";
-import ControlsPanel from "../../components/ControlsPanel";
-import DataCatalogSection from "../../components/DataCatalogSection";
 import MapPanel from "../../components/MapPanel";
-import MethodModal from "../../components/MethodModal";
-import RankingPanel from "../../components/RankingPanel";
+import { usePlatform } from "../../platform/AppShell";
 import type {
-  AnalysisResponse,
   AreaResult,
-  AvailableDataVersion,
   Catalog,
-  ComparisonResult,
-  DataCatalogResponse,
+  NativeAsset,
+  NativeComparison,
+  NativeInputSet,
+  NativeMethod,
+  NativeResultResponse,
+  NativeRun,
+  NativeScenario,
 } from "../../types";
 
-function scrollToSection(id: string) {
-  document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+const colours = ["#d97706", "#c2410c", "#2563eb", "#7c3aed", "#0891b2", "#475569", "#15803d"];
+const terminal = new Set(["succeeded", "succeeded_with_warnings", "failed", "cancelled"]);
+const modulePath = "/apps/investment-prioritisation";
+
+function readable(value: string) {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function short(value: string | null | undefined, length = 10) {
+  return value ? value.slice(0, length) : "—";
+}
+
+function timestamp(value: string | null | undefined) {
+  return value ? new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—";
+}
+
+function ErrorNotice({ error, onRetry }: { error: string; onRetry?: () => void }) {
+  return <div className="error-banner" role="alert"><strong>Action not completed.</strong> {error}{onRetry && <button type="button" onClick={onRetry}>Retry</button>}</div>;
+}
+
+function Loading() {
+  return <div className="platform-loading">Loading governed investment records…</div>;
+}
+
+function StateBadge({ value }: { value: string }) {
+  return <span className={`native-state ${value.toLowerCase().replaceAll("_", "-")}`}>{readable(value)}</span>;
+}
+
+function ModuleNav() {
+  return (
+    <nav className="native-module-nav" aria-label="Investment prioritisation">
+      <Link to={`${modulePath}/overview`}>Overview</Link><Link to={`${modulePath}/new-run`}>New run</Link>
+      <Link to={`${modulePath}/runs`}>Run history</Link><Link to={`${modulePath}/input-sets`}>Input sets</Link>
+      <Link to={`${modulePath}/compare`}>Compare</Link><Link to={`${modulePath}/methods`}>Methods</Link>
+      <Link to={`${modulePath}/scenarios`}>Scenarios</Link>
+    </nav>
+  );
+}
+
+function useNativeCatalog() {
+  const [catalog, setCatalog] = useState<Catalog | null>(null);
+  const [scenarios, setScenarios] = useState<NativeScenario[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void Promise.all([getInvestmentDataProfiles(), getInvestmentScenarios()]).then(([profiles, scenarioResponse]) => {
+      const indicators = Object.fromEntries(profiles.indicators.map((item, index) => [item.code, {
+        label: item.title, short_label: item.title,
+        description: `${item.direction}; governed ${item.unit} input.`, unit: item.unit,
+        colour: colours[index % colours.length],
+      }]));
+      const scenarioMap = Object.fromEntries(scenarioResponse.items.map((item) => [item.scenario_key, {
+        label: item.name, description: item.description, weights: item.parameters.weights,
+      }]));
+      setScenarios(scenarioResponse.items);
+      setCatalog({
+        indicators, scenarios: scenarioMap, datasets: [],
+        disclaimer: "Synthetic demonstration data — not for operational planning, funding decisions, or agronomic advice.",
+        method: {
+          name: "Approved native weighted linear combination",
+          formula: "score = Σ(normalised weight × indicator × 100) × quality adjustment",
+          missing_value_policy: "Missing indicators use the governed neutral value 0.5 and remain visible.",
+        },
+      });
+    }).catch((caught) => setError(caught instanceof Error ? caught.message : "Unable to load method metadata"));
+  }, []);
+  return { catalog, scenarios, error };
+}
+
+function RunTable({ runs }: { runs: NativeRun[] }) {
+  if (!runs.length) return <p className="muted">No analysis runs have been created.</p>;
+  return (
+    <div className="ranking-table-wrap"><table className="ranking-table native-run-table"><thead><tr><th>Run</th><th>Scenario</th><th>Status</th><th>Results</th><th>Requested</th></tr></thead><tbody>
+      {runs.map((run) => <tr key={run.id}><td><Link to={`${modulePath}/runs/${run.id}`}>{short(run.id, 8)}</Link>{run.legacy_run_id && <small>legacy #{run.legacy_run_id}</small>}</td><td>{run.scenario.name}<small>{run.scenario.version_label}</small></td><td><StateBadge value={run.status} /></td><td>{run.result_count || "—"}</td><td>{timestamp(run.requested_at)}</td></tr>)}
+    </tbody></table></div>
+  );
+}
+
+function OverviewPage() {
+  const [overview, setOverview] = useState<Record<string, any> | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { void getInvestmentOverview().then(setOverview).catch((caught) => setError(String(caught))); }, []);
+  if (error) return <ErrorNotice error={error} />;
+  if (!overview) return <Loading />;
+  const counts = overview.counts as Record<string, number>;
+  const recent = overview.recent_runs as NativeRun[];
+  return (
+    <>
+      <section className="native-hero panel"><div><p className="section-kicker">Phase 2A · Native governed analysis</p><h2>Prioritise investments from exact, approved inputs.</h2><p>Runs are explicit, asynchronous and reproducible. Opening this page never starts an analysis.</p></div><Link className="primary-button native-link-button" to={`${modulePath}/new-run`}>Create a run</Link></section>
+      <div className="result-summary-grid native-summary"><article><span>Locked input sets</span><strong>{counts.locked_input_sets}</strong></article><article><span>Approved scenarios</span><strong>{counts.approved_scenarios}</strong></article><article><span>Recorded runs</span><strong>{counts.runs}</strong></article><article><span>Write authority</span><strong className="small-authority">investment.*</strong></article></div>
+      <section className="panel native-list-card"><div className="section-title-row"><div><p className="section-kicker">Recent evidence</p><h2>Latest analysis runs</h2></div><Link to={`${modulePath}/runs`}>View all</Link></div><RunTable runs={recent} /></section>
+    </>
+  );
+}
+
+function RunsPage() {
+  const [runs, setRuns] = useState<NativeRun[] | null>(null);
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { void getInvestmentRuns().then((response) => setRuns(response.items)).catch((caught) => setError(String(caught))); }, []);
+  if (error) return <ErrorNotice error={error} />;
+  if (!runs) return <Loading />;
+  const visible = status ? runs.filter((run) => run.status === status) : runs;
+  return <section className="panel native-list-card"><div className="section-title-row"><div><p className="section-kicker">Durable analysis history</p><h2>Runs</h2><p className="muted compact">Historical UUID mappings and new asynchronous runs share this native read model.</p></div><label><span>Status</span><select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All statuses</option>{["queued", "running", "succeeded", "succeeded_with_warnings", "failed", "cancelled"].map((item) => <option key={item}>{item}</option>)}</select></label></div><RunTable runs={visible} /></section>;
+}
+
+function InputSetsPage() {
+  const { capabilities } = usePlatform();
+  const canCreate = capabilities.effective_permissions.includes("investment.input_set.create");
+  const navigate = useNavigate();
+  const [items, setItems] = useState<NativeInputSet[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [name, setName] = useState("new-analysis-inputs");
+  const [label, setLabel] = useState("New analysis inputs");
+  const [mode, setMode] = useState<"LEGACY_BUNDLE" | "SEPARATE_LAYERS">("SEPARATE_LAYERS");
+  useEffect(() => { void getInvestmentInputSets().then((response) => setItems(response.items)).catch((caught) => setError(String(caught))); }, []);
+  const create = async () => {
+    try {
+      const item = await createInvestmentInputSet({ name, label, profile_mode: mode, study_area_ref: {}, run_mode_compatibility: ["FORMAL"] });
+      navigate(`${modulePath}/input-sets/${item.id}`);
+    } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); }
+  };
+  if (!items) return error ? <ErrorNotice error={error} /> : <Loading />;
+  return (
+    <>{error && <ErrorNotice error={error} />}<section className="panel native-list-card"><div className="section-title-row"><div><p className="section-kicker">Frozen source selection</p><h2>Analysis input sets</h2></div></div><div className="native-card-grid">{items.map((item) => <Link className="native-record-card" to={`${modulePath}/input-sets/${item.id}`} key={item.id}><div><StateBadge value={item.status} /><span>{item.profile_mode.replaceAll("_", " ")}</span></div><h3>{item.label}</h3><p>{item.members.length} exact representations · {item.strictest_classification}</p><code>{short(item.checksum, 16)}</code></Link>)}</div></section>
+      {canCreate && <details className="panel native-create-disclosure"><summary>Create a draft input set</summary><div className="native-form-grid"><label>Name<input value={name} onChange={(event) => setName(event.target.value)} /></label><label>Label<input value={label} onChange={(event) => setLabel(event.target.value)} /></label><label>Profile mode<select value={mode} onChange={(event) => setMode(event.target.value as typeof mode)}><option value="SEPARATE_LAYERS">Separate governed layers</option><option value="LEGACY_BUNDLE">Legacy compatibility bundle</option></select></label><button className="primary-button" type="button" onClick={() => void create()}>Create draft</button></div></details>}</>
+  );
+}
+
+function InputSetDetailPage() {
+  const { inputSetId = "" } = useParams();
+  const { capabilities } = usePlatform();
+  const [item, setItem] = useState<NativeInputSet | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(() => { void getInvestmentInputSet(inputSetId).then(setItem).catch((caught) => setError(String(caught))); }, [inputSetId]);
+  useEffect(load, [load]);
+  const validate = async () => { try { setItem((await validateInvestmentInputSet(inputSetId)).input_set); } catch (caught) { setError(String(caught)); } };
+  const lock = async () => { if (!item) return; try { setItem(await lockInvestmentInputSet(item)); } catch (caught) { setError(String(caught)); } };
+  if (!item) return error ? <ErrorNotice error={error} /> : <Loading />;
+  return <>{error && <ErrorNotice error={error} />}<section className="panel native-list-card"><div className="section-title-row"><div><p className="section-kicker">Exact-version contract</p><h2>{item.label}</h2><p className="muted compact">{item.name} · {item.profile_mode.replaceAll("_", " ")}</p></div><StateBadge value={item.status} /></div><dl className="native-evidence-list"><div><dt>Canonical checksum</dt><dd><code>{item.checksum ?? "Not locked"}</code></dd></div><div><dt>Classification</dt><dd>{item.strictest_classification}</dd></div><div><dt>Readiness</dt><dd>{item.readiness?.ready ? "Ready" : "Not ready"}</dd></div><div><dt>Row version</dt><dd>{item.row_version}</dd></div></dl><h3>Frozen members</h3><div className="ranking-table-wrap"><table className="ranking-table"><thead><tr><th>Order</th><th>Role</th><th>Indicator</th><th>Dataset version</th><th>Representation</th></tr></thead><tbody>{item.members.map((member) => <tr key={member.id}><td>{member.ordinal}</td><td>{member.input_role}</td><td>{member.indicator_code ?? "—"}</td><td><code>{short(member.dataset_version_id, 14)}</code></td><td><code>{short(member.representation_id, 14)}</code></td></tr>)}</tbody></table></div>{item.status !== "LOCKED" && item.status !== "RETIRED" && <div className="analysis-actions"><button className="secondary-button" type="button" onClick={() => void validate()}>Validate exact inputs</button>{capabilities.effective_permissions.includes("investment.input_set.lock") && <button className="primary-button" type="button" onClick={() => void lock()}>Lock immutable set</button>}</div>}</section></>;
+}
+
+function MethodsPage() {
+  const [methods, setMethods] = useState<NativeMethod[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { void getInvestmentMethods().then((response) => setMethods(response.items)).catch((caught) => setError(String(caught))); }, []);
+  if (!methods) return error ? <ErrorNotice error={error} /> : <Loading />;
+  return <section className="panel native-list-card"><p className="section-kicker">Governed methodology</p><h2>Methods and immutable versions</h2>{methods.map((method) => <article className="native-governance-card" key={method.id}><h3>{method.name}</h3><p>{method.description}</p>{method.versions.map((version) => <div className="native-version-row" key={version.id}><StateBadge value={version.state} /><strong>{version.version_label}</strong><code>{short(version.checksum, 16)}</code><span>{version.implementation_key}</span><small>{version.code_ref}</small></div>)}</article>)}</section>;
+}
+
+function ScenariosPage() {
+  const { catalog, scenarios, error } = useNativeCatalog();
+  if (error) return <ErrorNotice error={error} />;
+  if (!catalog) return <Loading />;
+  return <section className="panel native-list-card"><p className="section-kicker">Approved policy lenses</p><h2>Versioned scenarios</h2><div className="native-card-grid">{scenarios.map((scenario) => <article className="native-record-card" key={scenario.id}><div><StateBadge value={scenario.state} /><span>v{scenario.version_label}</span></div><h3>{scenario.name}</h3><p>{scenario.description}</p><div className="scenario-weight-list">{Object.entries(scenario.parameters.weights).map(([code, weight]) => <span key={code}><i style={{ background: catalog.indicators[code]?.colour }} />{catalog.indicators[code]?.short_label}<b>{Math.round(weight * 100)}%</b></span>)}</div><code>{short(scenario.checksum, 16)}</code></article>)}</div></section>;
+}
+
+function NewRunPage() {
+  const navigate = useNavigate();
+  const { catalog, scenarios, error: catalogError } = useNativeCatalog();
+  const [inputs, setInputs] = useState<NativeInputSet[]>([]);
+  const [methods, setMethods] = useState<NativeMethod[]>([]);
+  const [inputId, setInputId] = useState("");
+  const [scenarioId, setScenarioId] = useState("");
+  const [weights, setWeights] = useState<Record<string, number>>({});
+  const [minimum, setMinimum] = useState(750);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { void Promise.all([getInvestmentInputSets(), getInvestmentMethods()]).then(([inputResponse, methodResponse]) => { const locked = inputResponse.items.filter((item) => item.status === "LOCKED"); setInputs(locked); setMethods(methodResponse.items); setInputId(locked[0]?.id ?? ""); }).catch((caught) => setError(String(caught))); }, []);
+  useEffect(() => { if (!scenarios.length || scenarioId) return; const first = scenarios.find((item) => item.state === "APPROVED"); if (first) { setScenarioId(first.id); setWeights(first.parameters.weights); setMinimum(first.parameters.min_rice_area_ha); } }, [scenarios, scenarioId]);
+  const selectedScenario = scenarios.find((item) => item.id === scenarioId);
+  const submit = async () => { if (!selectedScenario || !inputId) return; setSubmitting(true); setError(null); try { const run = await createInvestmentRun({ input_set_id: inputId, method_version_id: selectedScenario.method_version_id, scenario_id: scenarioId, run_mode: "FORMAL", overrides: { weights, min_rice_area_ha: minimum } }); navigate(`${modulePath}/runs/${run.id}`); } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); setSubmitting(false); } };
+  if (!catalog || !inputs.length || !methods.length) return (error || catalogError) ? <ErrorNotice error={error ?? catalogError ?? "Unable to load"} /> : <Loading />;
+  return <>{error && <ErrorNotice error={error} />}<section className="panel native-list-card"><div className="section-title-row"><div><p className="section-kicker">Explicit asynchronous command</p><h2>Create a reproducible run</h2><p className="muted compact">Submitting freezes exact input, method, scenario, parameters, code/build metadata and a durable job.</p></div></div><div className="native-form-grid run-form"><label>Locked input set<select value={inputId} onChange={(event) => setInputId(event.target.value)}>{inputs.map((item) => <option value={item.id} key={item.id}>{item.label} · {item.profile_mode.replaceAll("_", " ")}</option>)}</select><small>Checksum {short(inputs.find((item) => item.id === inputId)?.checksum, 14)}</small></label><label>Approved scenario<select value={scenarioId} onChange={(event) => { const next = scenarios.find((item) => item.id === event.target.value); setScenarioId(event.target.value); if (next) { setWeights(next.parameters.weights); setMinimum(next.parameters.min_rice_area_ha); } }}>{scenarios.filter((item) => item.state === "APPROVED").map((item) => <option value={item.id} key={item.id}>{item.name} · v{item.version_label}</option>)}</select><small>{selectedScenario?.description}</small></label><label>Minimum rice area<strong>{minimum.toLocaleString()} ha</strong><input type="range" min="0" max="3000" step="50" value={minimum} onChange={(event) => setMinimum(Number(event.target.value))} /></label></div><div className="native-weight-grid">{Object.keys(catalog.indicators).map((code) => <label key={code}><span><i style={{ background: catalog.indicators[code].colour }} />{catalog.indicators[code].short_label}</span><input type="number" min="0" max="1" step="0.01" value={weights[code] ?? 0} onChange={(event) => setWeights((current) => ({ ...current, [code]: Number(event.target.value) }))} /></label>)}</div><div className="analysis-actions"><div className="method-note inline"><span>i</span><p>This is synthetic demonstration evidence; no operational or funding use.</p></div><button className="primary-button" type="button" disabled={submitting} onClick={() => void submit()}>{submitting ? "Queueing durable job…" : "Create asynchronous run"}</button></div></section></>;
+}
+
+function ComparePage() {
+  const [runs, setRuns] = useState<NativeRun[] | null>(null);
+  const [left, setLeft] = useState(""); const [right, setRight] = useState("");
+  const [comparison, setComparison] = useState<NativeComparison | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { void getInvestmentRuns().then((response) => { const complete = response.items.filter((item) => item.status.startsWith("succeeded")); setRuns(complete); setLeft(complete[0]?.id ?? ""); setRight(complete[1]?.id ?? ""); }).catch((caught) => setError(String(caught))); }, []);
+  const compare = async () => { try { setComparison(await createInvestmentComparison(left, right)); } catch (caught) { setError(String(caught)); } };
+  if (!runs) return error ? <ErrorNotice error={error} /> : <Loading />;
+  return <>{error && <ErrorNotice error={error} />}<section className="panel native-list-card"><p className="section-kicker">Explicit read-only comparison</p><h2>Compare two completed runs</h2><p className="muted compact">This action computes differences from immutable results and never creates analysis runs.</p><div className="native-form-grid"><label>Left run<select value={left} onChange={(event) => setLeft(event.target.value)}>{runs.map((run) => <option value={run.id} key={run.id}>{short(run.id, 8)} · {run.scenario.name}</option>)}</select></label><label>Right run<select value={right} onChange={(event) => setRight(event.target.value)}>{runs.map((run) => <option value={run.id} key={run.id}>{short(run.id, 8)} · {run.scenario.name}</option>)}</select></label><button className="primary-button" type="button" disabled={!left || !right || left === right} onClick={() => void compare()}>Create comparison evidence</button></div>{comparison && <div className="comparison-evidence"><div><span>Areas</span><strong>{comparison.summary.area_count}</strong></div><div><span>Changed bands</span><strong>{comparison.summary.changed_bands}</strong></div><div><span>Eligibility changes</span><strong>{comparison.summary.eligibility_changes}</strong></div><div><span>Top-N overlap</span><strong>{comparison.summary.top_n_overlap}</strong></div><p>Checksum <code>{comparison.checksum}</code></p></div>}</section></>;
+}
+
+function RunDetailPage() {
+  const { runId = "" } = useParams();
+  const { capabilities } = usePlatform();
+  const { catalog, error: catalogError } = useNativeCatalog();
+  const [run, setRun] = useState<NativeRun | null>(null);
+  const [results, setResults] = useState<NativeResultResponse | null>(null);
+  const [lineage, setLineage] = useState<Record<string, unknown> | null>(null);
+  const [audit, setAudit] = useState<Array<Record<string, unknown>>>([]);
+  const [assets, setAssets] = useState<NativeAsset[]>([]);
+  const [selected, setSelected] = useState<AreaResult | null>(null);
+  const [metric, setMetric] = useState("priority");
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => { try { const next = await getInvestmentRun(runId); setRun(next); if (next.status.startsWith("succeeded")) { const [resultResponse, lineageResponse, auditResponse] = await Promise.all([getInvestmentResults(runId), getInvestmentLineage(runId), getInvestmentAudit(runId)]); setResults(resultResponse); setSelected((current) => current ?? resultResponse.items.find((item) => item.rank === 1) ?? resultResponse.items[0] ?? null); setLineage(lineageResponse); setAudit(auditResponse.items); } } catch (caught) { setError(caught instanceof Error ? caught.message : String(caught)); } }, [runId]);
+  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (!run || terminal.has(run.status)) return; const timer = window.setInterval(() => void load(), 1200); return () => window.clearInterval(timer); }, [run, load]);
+  const requestAssets = async () => { try { setAssets((await getInvestmentAssets(runId)).items); } catch (caught) { setError(String(caught)); } };
+  const cancel = async () => { try { setRun(await cancelInvestmentRun(runId)); } catch (caught) { setError(String(caught)); } };
+  if (!run || !catalog) return (error || catalogError) ? <ErrorNotice error={error ?? catalogError ?? "Unable to load"} onRetry={() => void load()} /> : <Loading />;
+  const eligible = results?.items.filter((item) => item.eligible) ?? [];
+  const average = eligible.length ? eligible.reduce((sum, item) => sum + item.score, 0) / eligible.length : 0;
+  return <>{error && <ErrorNotice error={error} />}<section className="panel native-run-header"><div><p className="section-kicker">Immutable analysis run</p><h2>{short(run.id, 18)}</h2><p>{run.scenario.name} · {run.input_set.label}</p></div><div><StateBadge value={run.status} /><strong>{Math.round(run.progress)}%</strong><small>{readable(run.current_step)}</small></div></section>{!terminal.has(run.status) && <section className="panel native-progress"><div><i style={{ width: `${run.progress}%` }} /></div><p>The durable worker is processing this run. This page polls status only; it does not submit work.</p>{capabilities.effective_permissions.includes("investment.run.cancel") && !["register-output", "finalise"].includes(run.current_step) && <button className="secondary-button" type="button" onClick={() => void cancel()}>Request cancellation</button>}</section>}{run.failure && <ErrorNotice error={`${run.failure.message ?? "Analysis failed"} [${run.failure.code ?? "UNKNOWN"}]`} />}
+    {results && <><div className="result-summary-grid native-summary"><article><span>Total areas</span><strong>{results.meta.total}</strong></article><article><span>Eligible</span><strong>{eligible.length}</strong></article><article><span>Average score</span><strong>{average.toFixed(2)}</strong></article><article><span>Result checksum</span><strong className="small-authority">{short(run.result_checksum, 10)}</strong></article></div><MapPanel catalog={catalog} geojson={results.geojson} metric={metric} selectedId={selected?.id ?? null} datasetLabel={`Native run ${short(run.id, 8)}`} onMetricChange={setMetric} onSelect={setSelected} />{selected && <section className="panel native-selected"><div><p className="section-kicker">Selected area</p><h3>{selected.name}</h3><p>{selected.province} · {selected.rice_area_ha.toLocaleString()} ha rice</p></div><div><strong>{selected.score.toFixed(2)}</strong><span>Rank {selected.rank ?? "excluded"}</span></div><dl>{Object.entries(selected.components).map(([code, component]) => <div key={code}><dt>{catalog.indicators[code]?.short_label}</dt><dd>{component.contribution.toFixed(2)}</dd></div>)}</dl></section>}<section className="panel native-list-card"><div className="section-title-row"><div><p className="section-kicker">Priority worklist</p><h2>Eligible areas</h2></div><button className="secondary-button" type="button" onClick={() => void requestAssets()}>Request audited downloads</button></div>{assets.length > 0 && <div className="native-downloads">{assets.map((asset) => <a key={asset.id} href={asset.url} target="_blank" rel="noreferrer">{asset.filename}<small>SHA {short(asset.sha256, 12)}</small></a>)}</div>}<div className="ranking-table-wrap"><table className="ranking-table"><thead><tr><th>Rank</th><th>Area</th><th>Province</th><th>Band</th><th>Score</th><th>Completeness</th></tr></thead><tbody>{eligible.map((item) => <tr key={item.id} className={selected?.id === item.id ? "selected" : ""} onClick={() => setSelected(item)}><td>{item.rank}</td><td><strong>{item.name}</strong><small>{item.code}</small></td><td>{item.province}</td><td>{item.priority_band}</td><td>{item.score.toFixed(2)}</td><td>{Math.round(item.data_completeness * 100)}%</td></tr>)}</tbody></table></div></section></>}
+    <section className="panel native-evidence"><p className="section-kicker">Reproducibility evidence</p><h2>Frozen snapshots, lineage and audit</h2><dl className="native-evidence-list"><div><dt>Input set checksum</dt><dd><code>{run.checksums?.input_set}</code></dd></div><div><dt>Method checksum</dt><dd><code>{run.checksums?.method}</code></dd></div><div><dt>Scenario checksum</dt><dd><code>{run.checksums?.scenario}</code></dd></div><div><dt>Code ref</dt><dd><code>{run.execution?.code_ref}</code></dd></div><div><dt>Worker task</dt><dd>{run.execution?.worker_task_version}</dd></div><div><dt>Input snapshots</dt><dd>{run.inputs?.length ?? 0}</dd></div><div><dt>Lineage process</dt><dd>{lineage ? "Registered" : "Pending"}</dd></div><div><dt>Audit events</dt><dd>{audit.length}</dd></div></dl></section></>;
 }
 
 function InvestmentPage() {
-  const didInitialise = useRef(false);
-  const [catalog, setCatalog] = useState<Catalog | null>(null);
-  const [dataCatalog, setDataCatalog] = useState<DataCatalogResponse | null>(null);
-  const [availableVersions, setAvailableVersions] = useState<AvailableDataVersion[]>([]);
-  const [selectedVersionId, setSelectedVersionId] = useState(0);
-  const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
-  const [scenarioKey, setScenarioKey] = useState("balanced");
-  const [weights, setWeights] = useState<Record<string, number>>({});
-  const [minRiceArea, setMinRiceArea] = useState(750);
-  const [mapMetric, setMapMetric] = useState("priority");
-  const [selected, setSelected] = useState<AreaResult | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [comparing, setComparing] = useState(false);
-  const [configurationDirty, setConfigurationDirty] = useState(false);
-  const [comparisonResults, setComparisonResults] = useState<ComparisonResult[] | null>(null);
-  const [methodOpen, setMethodOpen] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const initialise = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [nextCatalog, nextDataCatalog, nextVersions] = await Promise.all([
-        getCatalog(),
-        getDataCatalog(),
-        getAvailableDataVersions(),
-      ]);
-      const initialVersion = nextVersions.find((version) => version.is_current) ?? nextVersions[0];
-      if (!initialVersion) throw new Error("No published analysis dataset is available");
-      const initialWeights = nextCatalog.scenarios.balanced.weights;
-      const initialAnalysis = await runAnalysisPreview({
-        dataset_version_id: initialVersion.id,
-        scenario_key: "balanced",
-        weights: initialWeights,
-        min_rice_area_ha: 750,
-      });
-      setCatalog(nextCatalog);
-      setDataCatalog(nextDataCatalog);
-      setAvailableVersions(nextVersions);
-      setSelectedVersionId(initialVersion.id);
-      setWeights(initialWeights);
-      setAnalysis(initialAnalysis);
-      setSelected(initialAnalysis.ranking[0] ?? null);
-      setConfigurationDirty(false);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to initialise the workspace");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (didInitialise.current) return;
-    didInitialise.current = true;
-    void initialise();
-  }, [initialise]);
-
-  const handleScenarioChange = (key: string) => {
-    if (!catalog) return;
-    setScenarioKey(key);
-    setWeights({ ...catalog.scenarios[key].weights });
-    setConfigurationDirty(true);
-  };
-
-  const handleRun = async () => {
-    if (!catalog || !selectedVersionId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const nextAnalysis = await runAnalysis({
-        dataset_version_id: selectedVersionId,
-        scenario_key: scenarioKey,
-        weights,
-        min_rice_area_ha: minRiceArea,
-      });
-      setAnalysis(nextAnalysis);
-      setSelected(nextAnalysis.ranking[0] ?? null);
-      setConfigurationDirty(false);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The analysis could not be completed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCompare = async () => {
-    if (!catalog || !selectedVersionId) return;
-    setComparing(true);
-    setError(null);
-    try {
-      const entries = Object.entries(catalog.scenarios);
-      const responses = await Promise.all(
-        entries.map(([key, scenario]) =>
-          runAnalysis({
-            dataset_version_id: selectedVersionId,
-            scenario_key: key,
-            weights: scenario.weights,
-            min_rice_area_ha: minRiceArea,
-          }),
-        ),
-      );
-      setComparisonResults(
-        responses.map((response, index) => ({
-          key: entries[index][0],
-          label: entries[index][1].label,
-          response,
-        })),
-      );
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The scenarios could not be compared");
-    } finally {
-      setComparing(false);
-    }
-  };
-
-  const handleUseVersion = (versionId: number) => {
-    setSelectedVersionId(versionId);
-    setConfigurationDirty(true);
-    scrollToSection("analysis-workspace");
-  };
-
-  const handleSelect = useCallback((area: AreaResult) => setSelected(area), []);
-
-  if (error && (!catalog || !dataCatalog || !analysis)) {
-    return (
-      <main className="startup-state">
-        <div>
-          <p className="section-kicker">Local service unavailable</p>
-          <h1>The data workspace could not be initialised.</h1>
-          <p>{error}</p>
-          <button type="button" onClick={() => void initialise()}>Try again</button>
-        </div>
-      </main>
-    );
-  }
-
-  if (!catalog || !dataCatalog || !analysis) {
-    return (
-      <main className="startup-state">
-        <div className="loading-mark" aria-hidden="true" />
-        <p>Preparing the versioned data catalogue and priority workspace…</p>
-      </main>
-    );
-  }
-
-  const selectedVersion = availableVersions.find((version) => version.id === selectedVersionId);
-
   return (
-    <main className="investment-module">
-      <header className="legacy-module-header">
-        <div>
-          <p className="section-kicker">Installed application · legacy-compatible workflow</p>
-          <h1>Investment &amp; Extension Prioritisation</h1>
-          <p>Cambodia commune rice-resilience analysis using synthetic demonstration data.</p>
-        </div>
-        <div className="legacy-module-actions">
-          <nav aria-label="Analysis page sections">
-            <button type="button" onClick={() => scrollToSection("data-catalog")}>Data</button>
-            <button type="button" onClick={() => scrollToSection("analysis-workspace")}>Analysis</button>
-            <button type="button" onClick={() => scrollToSection("analysis-results")}>Results</button>
-          </nav>
-          <button className="secondary-button" type="button" onClick={() => setMethodOpen(true)}>Method &amp; data</button>
-        </div>
-      </header>
-
-      {error && (
-        <div className="error-banner" role="alert"><strong>Action not completed.</strong> {error}<button type="button" onClick={() => setError(null)} aria-label="Dismiss error">×</button></div>
-      )}
-      <section className="platform-intro">
-        <div>
-          <p className="section-kicker">Data first, analysis second</p>
-          <h2>Store the source, validate the version, publish it, then analyse it.</h2>
-        </div>
-        <div className="lineage-flow" aria-label="Data workflow">
-          <span>Upload</span><i>→</i><span>Validate</span><i>→</i><span>Publish</span><i>→</i><span>Analyse</span><i>→</i><span>Export</span>
-        </div>
-      </section>
-
-      <DataCatalogSection
-        catalog={dataCatalog}
-        activeVersionId={selectedVersionId}
-        onUpload={() => window.location.assign("/data/datasets/new")}
-        onUseVersion={handleUseVersion}
-      />
-
-      <section id="analysis-workspace" className="page-section analysis-workspace-section">
-        <div className="section-title-row">
-          <div>
-            <p className="section-kicker">Analysis workspace</p>
-            <h2>Climate-resilient rice investment and extension prioritisation</h2>
-            <p className="muted compact">The map, ranking and exports below are reproducibly linked to one published dataset version.</p>
-          </div>
-          <span className="lineage-badge">Source · {selectedVersion?.display_name ?? "No version selected"}</span>
-        </div>
-
-        <ControlsPanel
-          catalog={catalog}
-          availableVersions={availableVersions}
-          selectedVersionId={selectedVersionId}
-          scenarioKey={scenarioKey}
-          weights={weights}
-          minRiceArea={minRiceArea}
-          loading={loading}
-          comparing={comparing}
-          configurationDirty={configurationDirty}
-          onVersionChange={(versionId) => { setSelectedVersionId(versionId); setConfigurationDirty(true); }}
-          onScenarioChange={handleScenarioChange}
-          onWeightChange={(code, value) => { setWeights((current) => ({ ...current, [code]: value })); setConfigurationDirty(true); }}
-          onMinRiceAreaChange={(value) => { setMinRiceArea(value); setConfigurationDirty(true); }}
-          onRun={() => void handleRun()}
-          onCompare={() => void handleCompare()}
-        />
-
-        {configurationDirty && (
-          <div className="stale-result-note">The configuration above has changed. The map still shows run #{analysis.run_id} until you run the analysis again.</div>
-        )}
-        <MapPanel
-          catalog={catalog}
-          geojson={analysis.geojson}
-          metric={mapMetric}
-          selectedId={selected?.id ?? null}
-          datasetLabel={`${analysis.dataset_version.dataset_name} ${analysis.dataset_version.version_label}`}
-          onMetricChange={setMapMetric}
-          onSelect={handleSelect}
-        />
-      </section>
-
-      <RankingPanel catalog={catalog} analysis={analysis} selected={selected} onSelect={handleSelect} />
-
-      <footer className="app-footer">
-        <span>{catalog.disclaimer}</span>
-        <span>PostGIS metadata and analysis · S3-compatible source-file storage · versioned lineage</span>
-      </footer>
-
-      {comparisonResults && <ComparisonModal results={comparisonResults} onClose={() => setComparisonResults(null)} />}
-      {methodOpen && <MethodModal catalog={catalog} onClose={() => setMethodOpen(false)} />}
+    <main className="investment-module native-investment-module">
+      <header className="legacy-module-header native-module-header"><div><p className="section-kicker">Installed application · native Phase 2A</p><h1>Investment &amp; Extension Prioritisation</h1><p>Governed exact inputs · approved methods · durable jobs · catalogued outputs</p></div><ModuleNav /></header>
+      <Routes><Route index element={<Navigate replace to="overview" />} /><Route path="overview" element={<OverviewPage />} /><Route path="new-run" element={<NewRunPage />} /><Route path="runs" element={<RunsPage />} /><Route path="runs/:runId" element={<RunDetailPage />} /><Route path="input-sets" element={<InputSetsPage />} /><Route path="input-sets/:inputSetId" element={<InputSetDetailPage />} /><Route path="compare" element={<ComparePage />} /><Route path="methods" element={<MethodsPage />} /><Route path="scenarios" element={<ScenariosPage />} /><Route path="*" element={<Navigate replace to="overview" />} /></Routes>
+      <footer className="app-footer"><span>Synthetic demonstration only — no operational planning or funding decisions.</span><span>Native investment.* authority · exact catalog lineage · short-lived downloads</span></footer>
     </main>
   );
 }

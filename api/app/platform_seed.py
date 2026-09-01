@@ -25,6 +25,7 @@ from app.platform_models import (
     QualityIssue,
     QualityProfile,
     QualityRun,
+    Representation,
     Role,
     RoleAssignment,
     RolePermission,
@@ -67,10 +68,18 @@ PERMISSIONS = {
     "lineage.view",
     "quality.manage_profiles",
     "apps.investment.use",
+    "investment.input_set.create",
+    "investment.input_set.lock",
     "investment.run.create",
     "investment.run.view",
+    "investment.run.cancel",
     "investment.run.export",
     "investment.run.compare",
+    "investment.method.edit",
+    "investment.method.approve",
+    "investment.scenario.edit",
+    "investment.scenario.approve",
+    "investment.result.submit_review",
     "audit.view",
     "audit.export",
     "jobs.view_own",
@@ -86,6 +95,7 @@ ROLE_PERMISSIONS = {
         "workspace.view", "data.catalog.enter", "dataset.create", "dataset.view_metadata",
         "dataset.preview", "dataset.download", "dataset.edit_metadata", "dataset.upload_version",
         "dataset.submit_review", "dataset.manage_access", "lineage.view", "jobs.view_own", "apps.investment.use",
+        "investment.input_set.create", "investment.input_set.lock",
     },
     "data_reviewer": {
         "workspace.view", "data.catalog.enter", "dataset.view_metadata", "dataset.preview",
@@ -101,6 +111,8 @@ ROLE_PERMISSIONS = {
         "workspace.view", "data.catalog.enter", "dataset.view_metadata", "dataset.preview",
         "dataset.download", "lineage.view", "apps.investment.use", "investment.run.create",
         "investment.run.view", "investment.run.export", "investment.run.compare", "jobs.view_own",
+        "investment.input_set.create", "investment.input_set.lock", "investment.run.cancel",
+        "investment.result.submit_review",
     },
     "viewer": {
         "workspace.view", "data.catalog.enter", "dataset.view_metadata", "dataset.preview",
@@ -111,6 +123,16 @@ ROLE_PERMISSIONS = {
         "workspace.view", "data.catalog.enter", "dataset.view_metadata", "lineage.view",
         "audit.view", "audit.export", "jobs.view_own", "jobs.view_workspace",
         "apps.investment.use", "investment.run.view", "investment.run.compare",
+    },
+    "method_editor": {
+        "workspace.view", "data.catalog.enter", "dataset.view_metadata", "dataset.preview",
+        "dataset.download", "lineage.view", "apps.investment.use", "investment.method.edit",
+        "investment.scenario.edit", "investment.run.view", "investment.run.compare", "jobs.view_own",
+    },
+    "method_approver": {
+        "workspace.view", "data.catalog.enter", "dataset.view_metadata", "lineage.view",
+        "apps.investment.use", "investment.method.approve", "investment.scenario.approve",
+        "investment.run.view", "investment.run.compare", "jobs.view_own",
     },
 }
 
@@ -123,6 +145,8 @@ PERSONAS = {
     "dev-analyst": ("Vichea Pen", "Spatial analyst", "analyst"),
     "dev-viewer": ("Maly Chea", "Programme viewer", "viewer"),
     "dev-auditor": ("Samnang Khem", "Auditor", "auditor"),
+    "dev-method-editor": ("Chantha Ros", "Investment method editor", "method_editor"),
+    "dev-method-approver": ("Bopha Keo", "Investment method approver", "method_approver"),
 }
 
 
@@ -214,6 +238,8 @@ def seed_platform(session: Session) -> None:
         "data-review-board": "Data review board",
         "data-publishers": "Data publishers",
         "spatial-analysts": "Spatial analysts",
+        "investment-method-board": "Investment method board",
+        "investment-method-approvers": "Investment method approvers",
     }
     groups: dict[str, Group] = {}
     for slug, name in group_specs.items():
@@ -234,6 +260,8 @@ def seed_platform(session: Session) -> None:
         "data-review-board": "dev-reviewer",
         "data-publishers": "dev-publisher",
         "spatial-analysts": "dev-analyst",
+        "investment-method-board": "dev-method-editor",
+        "investment-method-approvers": "dev-method-approver",
     }
     for group_slug, subject in group_personas.items():
         group, user = groups[group_slug], users[subject]
@@ -313,6 +341,13 @@ def seed_platform(session: Session) -> None:
             )
             session.add(module)
             session.flush()
+        else:
+            module.name = manifest["module"]["name"]
+            module.description = manifest["module"]["description"]
+            module.contract_version = manifest["contract_version"]
+            module.module_version = manifest["module"]["version"]
+            module.manifest = manifest
+            module.manifest_valid = True
         enabled = module_key == "investment-prioritisation"
         workspace_module = session.scalar(
             select(WorkspaceModule).where(
@@ -328,9 +363,21 @@ def seed_platform(session: Session) -> None:
                 feature_flags={item["key"]: item["default"] for item in manifest.get("feature_flags", [])},
             )
             session.add(workspace_module)
+        else:
+            defaults = {
+                item["key"]: item["default"] for item in manifest.get("feature_flags", [])
+            }
+            workspace_module.feature_flags = {
+                **defaults,
+                **(workspace_module.feature_flags or {}),
+            }
+            workspace_module.enabled = workspace_module.enabled or enabled
 
     profile_specs = {
         "analysis-ready-priority-bundle@1.0": "vector",
+        "administrative-boundary@1.0": "vector",
+        "normalised-indicator-layer@1.0": "table",
+        "priority-ranking@1.0": "derived_product",
         "generic-vector@1.0": "vector",
         "generic-table@1.0": "table",
         "document@1.0": "document",
@@ -358,6 +405,9 @@ def seed_platform(session: Session) -> None:
 
     session.flush()
     _backfill_legacy(session, workspace, legacy_user, profiles["analysis-ready-priority-bundle@1.0"])
+    from app.investment.seed import seed_investment_governance
+
+    seed_investment_governance(session)
     session.commit()
 
 
@@ -442,6 +492,34 @@ def _backfill_legacy(
                         size_bytes=legacy_version.file_size,
                         sha256=legacy_version.checksum_sha256,
                         scan_status="LEGACY_UNSCANNED",
+                    )
+                )
+                session.flush()
+            if session.scalar(
+                select(Representation.id).where(
+                    Representation.dataset_version_id == version.id,
+                    Representation.representation_type == "legacy_priority_bundle",
+                )
+            ) is None:
+                session.add(
+                    Representation(
+                        id=stable_id("legacy-representation", str(legacy_version.id)),
+                        dataset_version_id=version.id,
+                        representation_type="legacy_priority_bundle",
+                        locator=legacy_version.object_key,
+                        status="READY",
+                        crs="EPSG:4326",
+                        geometry_type="MultiPolygon",
+                        schema_json={
+                            "profile": "analysis-ready-priority-bundle@1.0",
+                            "area_code_field": "code",
+                            "geometry_field": "geometry",
+                            "indicator_fields": [
+                                "yield_gap", "drought_risk", "flood_risk", "poverty_index",
+                                "irrigation_gap", "market_isolation", "nbs_opportunity",
+                            ],
+                        },
+                        statistics_json={"record_count": legacy_version.record_count},
                     )
                 )
                 session.flush()

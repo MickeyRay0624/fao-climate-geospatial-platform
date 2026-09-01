@@ -14,7 +14,7 @@ type Props = {
   catalog: Catalog;
   geojson: GeoFeatureCollection | null;
   metric: string;
-  selectedId: number | null;
+  selectedId: string | number | null;
   datasetLabel: string;
   onMetricChange: (metric: string) => void;
   onSelect: (area: AreaResult) => void;
@@ -64,7 +64,7 @@ function MapPanel({
           metricRef.current === "priority"
             ? properties.score / 100
             : properties.indicators?.[metricRef.current];
-        const isSelected = Number(feature.getId()) === selectedIdRef.current;
+        const isSelected = String(feature.getId()) === String(selectedIdRef.current);
         return new Style({
           fill: new Fill({ color: colourFor(rawValue ?? null, properties.eligible) }),
           stroke: new Stroke({
@@ -115,11 +115,7 @@ function MapPanel({
       dataProjection: "EPSG:4326",
       featureProjection: "EPSG:3857",
     });
-    features.forEach((feature) => {
-      const numericId = Number(feature.get("id") ?? feature.getId());
-      const propertyId = Number(feature.get("id") ?? feature.getProperties().id);
-      feature.setId(Number.isFinite(numericId) ? numericId : propertyId);
-    });
+    features.forEach((feature) => feature.setId(String(feature.get("id") ?? feature.getId() ?? feature.getProperties().id)));
     source.addFeatures(features);
     if (!hasFitRef.current && features.length && mapRef.current) {
       const extent = source.getExtent();
