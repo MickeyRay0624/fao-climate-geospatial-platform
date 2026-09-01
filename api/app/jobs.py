@@ -18,7 +18,7 @@ from app.config import (
 )
 from app.database import SessionLocal
 from app.models import AdminArea
-from app.object_store import copy_object, get_bytes, remove_object
+from app.object_store import copy_object, get_bytes, put_bytes, remove_object
 from app.platform_models import (
     CatalogAsset,
     CatalogDataset,
@@ -238,6 +238,7 @@ def process_upload_session(self, upload_session_id: str, job_id: str, correlatio
             session.commit()
 
             _set_step(session, job.id, "register", "RUNNING")
+            transformations: list[dict[str, object]] = []
             for item, payload, digest, scan_status, result in results:
                 existing_asset = session.scalar(
                     select(CatalogAsset).where(
@@ -267,6 +268,53 @@ def process_upload_session(self, upload_session_id: str, job_id: str, correlatio
                         scan_status=scan_status,
                     )
                     session.add(asset)
+                representation_key = final_key
+                derived_digest = None
+                if result.derived_payload is not None and not result.has_blocking:
+                    derived_digest = hashlib.sha256(result.derived_payload).hexdigest()
+                    derived_name = result.derived_filename or f"{item.id}.geojson"
+                    representation_key = (
+                        f"catalog/{upload.workspace_id}/datasets/{dataset.id}/"
+                        f"versions/{version.id}/representations/{item.id}/{derived_name}"
+                    )
+                    put_bytes(
+                        representation_key,
+                        result.derived_payload,
+                        result.derived_media_type or "application/geo+json",
+                    )
+                    if session.scalar(
+                        select(CatalogAsset.id).where(
+                            CatalogAsset.dataset_version_id == version.id,
+                            CatalogAsset.sha256 == derived_digest,
+                            CatalogAsset.role == "derived-vector",
+                        )
+                    ) is None:
+                        session.add(
+                            CatalogAsset(
+                                dataset_version_id=version.id,
+                                role="derived-vector",
+                                filename=derived_name,
+                                object_key=representation_key,
+                                media_type=(
+                                    result.derived_media_type
+                                    or "application/geo+json"
+                                ),
+                                size_bytes=len(result.derived_payload),
+                                sha256=derived_digest,
+                                upload_session_id=upload.id,
+                                scan_status=scan_status,
+                            )
+                        )
+                    transformations.append(
+                        {
+                            "source_filename": item.filename,
+                            "derived_filename": derived_name,
+                            "source_crs": result.schema.get("source_crs"),
+                            "target_crs": result.schema.get("preview_crs"),
+                            "reprojected": result.schema.get("reprojected", False),
+                            "source_preserved": True,
+                        }
+                    )
                 if session.scalar(
                     select(Representation.id).where(
                         Representation.dataset_version_id == version.id,
@@ -277,13 +325,16 @@ def process_upload_session(self, upload_session_id: str, job_id: str, correlatio
                         Representation(
                             dataset_version_id=version.id,
                             representation_type=result.representation_type,
-                            locator=final_key,
+                            locator=representation_key,
                             status="READY" if not result.has_blocking else "FAILED",
                             crs=result.crs,
                             geometry_type=result.geometry_type,
                             bbox_json=result.bbox,
                             schema_json=result.schema,
-                            statistics_json={"record_count": result.record_count},
+                            statistics_json={
+                                "record_count": result.record_count,
+                                "derived_sha256": derived_digest,
+                            },
                             preview_json=result.preview,
                         )
                     )
@@ -298,7 +349,11 @@ def process_upload_session(self, upload_session_id: str, job_id: str, correlatio
                 external_run_id=str(job.id),
                 method_identifier=version.profile_key,
                 method_version="1.0",
-                parameters_json={"upload_session_id": str(upload.id), "scan_bypass": ALLOW_INSECURE_DEV_FILE_SCAN},
+                parameters_json={
+                    "upload_session_id": str(upload.id),
+                    "scan_bypass": ALLOW_INSECURE_DEV_FILE_SCAN,
+                    "transformations": transformations,
+                },
                 status="SUCCEEDED" if not blocking_count else "FAILED",
                 completed_at=_now(),
             )

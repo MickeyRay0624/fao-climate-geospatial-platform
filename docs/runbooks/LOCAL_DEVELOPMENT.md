@@ -56,6 +56,9 @@ npm --prefix web run build
 npm --prefix web audit
 python scripts/e2e_datahub.py
 python scripts/e2e_negative_controls.py
+python scripts/e2e_investment.py
+python scripts/demo_smoke.py
+npm --prefix web run test:e2e
 ```
 
 Database trigger verification:
@@ -76,7 +79,7 @@ docker compose run --rm migrate alembic current
 docker compose run --rm migrate alembic upgrade head
 ```
 
-The current head is `20260831_0003`. Downgrade is intentionally prohibited; follow the restore runbook for rollback.
+The current head is `20260901_0005`. Downgrade is intentionally prohibited; follow the restore runbook for rollback.
 
 Verify the repeatable Phase 2A backfill and exact reconciliation:
 
@@ -126,3 +129,9 @@ docker compose logs --tail=200 migrate seed api worker web
 - Worker absent in health: wait one health interval, then inspect worker/Redis logs.
 - Browser upload cannot reach MinIO: confirm `OBJECT_STORE_PUBLIC_ENDPOINT=localhost:9000`, while the internal endpoint remains `minio:9000`.
 - Web reports a missing dependency after changing `package-lock.json`: rebuild the image. For an existing development-only node_modules volume, `docker compose exec -T web npm install` refreshes it without touching data services.
+- Direct Shapefile ZIP validation reports missing components: provide exactly one matching `.shp`, `.shx`, `.dbf` and `.prj` set; do not nest another archive.
+- GeoPackage/vector preview reports reprojection required: convert through a reviewed CRS workflow before upload. The local path deliberately does not guess a transform.
+
+## Demonstration operations
+
+Use [DEMO_GUIDE.md](../demo/DEMO_GUIDE.md) for the presentation sequence and [DEMO_RESET_WITHOUT_DATA_LOSS.md](DEMO_RESET_WITHOUT_DATA_LOSS.md) after a mutating session. The reset procedure restores into a separately named database and never deletes volumes.

@@ -191,8 +191,64 @@ export type NativeInputMember = {
   representation_id: string;
   input_role: string;
   indicator_code: string | null;
+  join_key: string;
+  value_field: string | null;
+  geometry_field: string | null;
+  unit: string | null;
+  direction: string | null;
   object_sha256?: string;
   ordinal: number;
+};
+
+export type InvestmentInputCandidate = {
+  dataset: { id: string; title: string; classification: string; licence_code: string | null };
+  version: { id: string; version_label: string; state: string; profile_key: string };
+  representation: {
+    id: string;
+    type: string;
+    status: string;
+    schema: Record<string, unknown>;
+    statistics: Record<string, unknown>;
+    crs: string | null;
+  };
+  suggested_mapping: {
+    input_role: "legacy_priority_bundle" | "administrative_boundary" | "indicator";
+    indicator_code: string | null;
+    join_key: string;
+    value_field: string | null;
+    geometry_field: string | null;
+    unit: string | null;
+    direction: string | null;
+  };
+  evidence_type: "REAL_SAMPLE" | "SYNTHETIC_DEMO" | "GOVERNED";
+};
+
+export type InvestmentReadiness = {
+  readiness_state: "NOT_READY" | "READY";
+  ready_to_run: boolean;
+  boundary_available: boolean;
+  available_indicator_roles: string[];
+  missing_required_roles: string[];
+  roles: Array<{
+    role: string;
+    label: string;
+    state: "AVAILABLE" | "MISSING" | "UNRESOLVED" | "MISSING_UNAPPROVED";
+    reason_codes: string[];
+    candidate: InvestmentInputCandidate | null;
+  }>;
+  profile_issues: Array<Record<string, string>>;
+  spatial_compatibility: Record<string, string | null>;
+  record_coverage: {
+    boundary_records: number;
+    poverty_records: number;
+    comparable_declared_records: number;
+    state: string;
+    note: string;
+  };
+  method_readiness: { state: string; reason_code: string; note: string };
+  reason_codes: string[];
+  collection: { id: string; title: string; path: string } | null;
+  warning: string;
 };
 
 export type NativeInputSet = {
@@ -204,6 +260,7 @@ export type NativeInputSet = {
   strictest_classification: string;
   readiness: { ready?: boolean; errors?: Array<{ code: string; message: string }> };
   warnings: Array<{ code: string; message: string }>;
+  evidence_mode: "REAL_SAMPLE" | "SYNTHETIC_DEMO" | "GOVERNED" | "MIXED" | "EMPTY";
   checksum: string | null;
   row_version: number;
   members: NativeInputMember[];

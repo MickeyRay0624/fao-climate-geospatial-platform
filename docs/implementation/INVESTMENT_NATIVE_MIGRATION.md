@@ -1,5 +1,7 @@
 # Phase 2A investment native migration
 
+> Historical Phase 2A report. Repository visibility and later platform capabilities are described in the Phase 3 release notes; the observations below retain their 2026-08-31 context.
+
 - Completed: 2026-08-31
 - Branch: `feat/investment-native-migration`
 - Alembic head: `20260831_0003`
@@ -13,7 +15,7 @@ Legacy `public.analysis_runs` and `public.priority_results` are unchanged. Their
 ## GitHub delivery
 
 - Authenticated account: `MickeyRay0624`
-- Private repository: <https://github.com/MickeyRay0624/fao-climate-geospatial-platform>
+- Repository (public as of the Phase 3 release): <https://github.com/MickeyRay0624/fao-climate-geospatial-platform>
 - Remote: `github-personal`
 - Foundation/base: `refactor/platform-foundation-data-hub`
 - Feature/head: `feat/investment-native-migration`
@@ -99,4 +101,4 @@ Final test counts and GitHub delivery evidence are recorded in the pull request 
 
 Rollback follows [INVESTMENT_RUNS_AND_RECOVERY.md](../runbooks/INVESTMENT_RUNS_AND_RECOVERY.md) and the paired pre-change snapshot `backups/pre-investment-native-migration-20260831T081639Z/`, which is Git-ignored. No downgrade deletes native evidence.
 
-Not implemented: production FAO SSO, approved malware scanning, cloud deployment, raster/COG/STAC processing, GeoParquet/PDF exports, production telemetry/SIEM, Extension Field Support, business validation of the method, or agronomic/LLM advice.
+At the Phase 2A checkpoint, production FAO SSO, approved malware scanning, cloud deployment, raster/COG/STAC processing, GeoParquet/PDF exports, production telemetry/SIEM, Extension Field Support, business validation of the method and automated/agronomic advice were not implemented. See [v0.3.0-demo-platform.md](../releases/v0.3.0-demo-platform.md) for the later Extension and governance delivery.

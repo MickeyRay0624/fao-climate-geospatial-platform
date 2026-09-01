@@ -28,6 +28,14 @@ export function usePlatform(): PlatformContextValue {
 const iconGlyph: Record<string, string> = {
   home: "⌂", database: "▦", folder: "▤", upload: "⇧", check: "✓",
   map: "⌖", users: "◉", groups: "◎", shield: "◇", audit: "≡", help: "?",
+  collection: "▥",
+  apps: "⬡",
+  policy: "§",
+  quality: "◈",
+  knowledge: "▤",
+  archive: "□",
+  health: "●",
+  field: "⌖",
 };
 
 function AppShell({ children }: { children: ReactNode }) {
@@ -113,6 +121,9 @@ function AppShell({ children }: { children: ReactNode }) {
               <select
                 value={capabilities.current_user.external_subject}
                 onChange={(event) => {
+                  Object.keys(sessionStorage)
+                    .filter((key) => key.startsWith("extension:draft:"))
+                    .forEach((key) => sessionStorage.removeItem(key));
                   setDevSubject(event.target.value);
                   setIdentityEpoch((value) => value + 1);
                 }}
@@ -160,11 +171,11 @@ function AppShell({ children }: { children: ReactNode }) {
               className="global-search"
               onSubmit={(event) => {
                 event.preventDefault();
-                navigate(`/data/catalog?search=${encodeURIComponent(search)}`);
+                navigate(`/search?q=${encodeURIComponent(search)}`);
               }}
             >
               <span aria-hidden="true">⌕</span>
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search datasets, versions, people…" aria-label="Search platform" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search datasets, versions, runs…" aria-label="Search platform" />
               <kbd>↵</kbd>
             </form>
             <div className="topbar-actions">

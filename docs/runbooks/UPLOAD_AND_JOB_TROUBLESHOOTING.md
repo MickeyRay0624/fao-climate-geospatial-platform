@@ -45,6 +45,8 @@ docker compose logs --tail=200 api worker redis minio
 
 - `generic-vector@1.0`: JSON, non-empty FeatureCollection, geometry validity/types, bbox, fields, record count, preview. Missing explicit CRS produces a warning because GeoJSON is treated as WGS84.
 - `generic-table@1.0`: decodable CSV, unique non-empty headers, rows, sampled types, malformed/empty row issues, preview.
+- `administrative-boundary@1.0`: polygonal GeoJSON with stable, unique `area_code`, `area_name`, `admin_level`, valid geometry, extent and an explicit coordinate-policy result.
+- `normalised-indicator-layer@1.0`: one indicator per CSV/GeoJSON layer, unique `area_code`, controlled direction, declared unit/time coverage and values in the method contract range. Missing values warn; duplicate join keys block.
 - `document@1.0`: extension/MIME consistency, size, checksum, scan status. There is no OCR and no sensitive-text preview.
 - `analysis-ready-priority-bundle@1.0`: preserves the existing required fields, indicator ranges, commune-code uniqueness, geometry, Cambodia extent, and missing-value rules.
 

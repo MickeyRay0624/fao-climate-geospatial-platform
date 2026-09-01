@@ -1,28 +1,59 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { getDataHubDatasets, getModules } from "../api";
+import { getDataHubDatasets, getHomeDashboard, getModules } from "../api";
 import { usePlatform } from "../platform/AppShell";
-import type { DataHubDatasetSummary, ModuleRecord } from "../platform/types";
+import type { DataHubDatasetSummary, HomeDashboard, ModuleRecord } from "../platform/types";
+
+const labels: Record<string, string> = {
+  contributor: "Contributor",
+  reviewer: "Reviewer / publisher",
+  analyst: "Investment analyst",
+  admin: "Workspace administrator",
+  draft_versions: "Draft versions",
+  failed_or_warning_jobs: "Jobs needing attention",
+  pending_submissions: "Pending submissions",
+  assigned_reviews: "Assigned reviews",
+  pending_publication: "Pending publication",
+  blocking_quality_issues: "Blocking quality issues",
+  active_or_failed_runs: "Active or failed runs",
+  locked_input_sets: "Locked input sets",
+  members: "Active members",
+  enabled_modules: "Enabled modules",
+  active_jobs: "Active jobs",
+  failed_jobs: "Failed jobs",
+  scanner_mode: "Scanner mode",
+};
+
+function readable(value: unknown): string {
+  if (typeof value === "number") return value.toLocaleString();
+  if (typeof value === "string") return value.replaceAll("_", " ");
+  if (value && typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).map(([key, item]) => `${key}: ${String(item)}`).join(" · ");
+  }
+  return "—";
+}
 
 export default function HomePage() {
   const { capabilities, jobs } = usePlatform();
   const [datasets, setDatasets] = useState<DataHubDatasetSummary[]>([]);
   const [modules, setModules] = useState<ModuleRecord[]>([]);
+  const [dashboard, setDashboard] = useState<HomeDashboard | null>(null);
 
   useEffect(() => {
-    void Promise.all([getDataHubDatasets(), getModules()]).then(([catalogue, registry]) => {
+    void Promise.all([getDataHubDatasets(), getModules(), getHomeDashboard()]).then(([catalogue, registry, home]) => {
       setDatasets(catalogue.items);
       setModules(registry.items);
+      setDashboard(home);
     });
   }, []);
 
   const metrics = useMemo(() => ({
-    datasets: datasets.length,
-    published: datasets.filter((item) => item.current_published_version).length,
+    datasets: dashboard?.catalogue.visible_datasets ?? datasets.length,
+    published: dashboard?.catalogue.published_datasets ?? datasets.filter((item) => item.current_published_version).length,
     attention: datasets.filter((item) => ["FAILED", "WARNING"].includes(item.quality_status ?? "")).length,
-    jobs: jobs.filter((item) => ["QUEUED", "RUNNING"].includes(item.status)).length,
-  }), [datasets, jobs]);
+    jobs: dashboard?.jobs.active ?? jobs.filter((item) => ["QUEUED", "RUNNING"].includes(item.status)).length,
+  }), [dashboard, datasets, jobs]);
 
   return (
     <div className="platform-page home-page">
@@ -40,7 +71,7 @@ export default function HomePage() {
           <div className="map-grid" />
           <div className="map-orbit orbit-one" /><div className="map-orbit orbit-two" />
           <span className="map-pin pin-one">1</span><span className="map-pin pin-two">2</span><span className="map-pin pin-three">3</span>
-          <div className="map-caption"><small>Pilot geography</small><strong>Cambodia</strong><span>111 synthetic commune records</span></div>
+          <div className="map-caption"><small>Pilot geography</small><strong>Cambodia</strong><span>{dashboard?.catalogue.real_samples ?? 0} real samples · synthetic analysis separate</span></div>
         </div>
       </section>
 
@@ -50,6 +81,17 @@ export default function HomePage() {
         <article><span className="metric-icon amber">!</span><div><strong>{metrics.attention}</strong><small>quality items to review</small></div></article>
         <article><span className="metric-icon blue">↻</span><div><strong>{metrics.jobs}</strong><small>active processing jobs</small></div></article>
       </section>
+
+      {dashboard && <section className="home-role-grid" aria-label="Role-aware workspace activity">
+        {Object.entries(dashboard.role_cards).map(([role, card]) => <article key={role} className="home-role-card">
+          <p className="platform-kicker">{labels[role] ?? role}</p>
+          <dl>{Object.entries(card).filter(([key]) => key !== "recent_runs").map(([key, value]) => <div key={key}><dt>{labels[key] ?? key.replaceAll("_", " ")}</dt><dd>{readable(value)}</dd></div>)}</dl>
+          {Array.isArray(card.recent_runs) && card.recent_runs.length > 0 && <div className="home-recent-runs"><strong>Recent analysis runs</strong>{card.recent_runs.slice(0, 3).map((run) => {
+            const item = run as { id: string; status: string; result_count: number };
+            return <Link key={item.id} to={`/apps/investment-prioritisation/runs/${item.id}`}><code>{item.id.slice(0, 8)}</code><span>{item.status.replaceAll("_", " ")} · {item.result_count} results</span></Link>;
+          })}</div>}
+        </article>)}
+      </section>}
 
       <section className="home-grid">
         <div className="home-main-column">
@@ -74,10 +116,14 @@ export default function HomePage() {
           </div>
         </div>
         <aside className="home-side-column">
+          {dashboard && <section className="recent-data-card">
+            <div><p className="platform-kicker">Recent governed data</p><h2>Latest visible datasets</h2></div>
+            <div className="recent-data-list">{dashboard.catalogue.recent.map((item) => <Link to={`/data/datasets/${item.id}`} key={item.id}><span>{item.title}</span><small>{item.data_kind} · {item.published ? "published" : "not published"}</small></Link>)}</div>
+          </section>}
           <section className="boundary-card">
             <span className="boundary-label">Demonstration boundary</span>
             <h2>Evidence, not operational advice</h2>
-            <p>The current commune boundaries and all seven indicators are deterministic synthetic data. They do not represent FAO, government, satellite, census or programme outputs.</p>
+            <p>{dashboard?.disclaimer ?? "Real samples and synthetic analysis data are labelled separately and are not operational advice."}</p>
             <ul><li>No real-time sensors or weather</li><li>No field-level digital twin</li><li>No agronomic recommendation engine</li></ul>
           </section>
           <section className="workspace-activity-card">

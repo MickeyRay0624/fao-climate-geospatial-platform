@@ -59,6 +59,8 @@ class CreateVersionRequest(BaseModel):
     version_label: str = Field(min_length=1, max_length=120)
     profile_key: Literal[
         "analysis-ready-priority-bundle@1.0",
+        "administrative-boundary@1.0",
+        "normalised-indicator-layer@1.0",
         "generic-vector@1.0",
         "generic-table@1.0",
         "document@1.0",
@@ -120,6 +122,31 @@ class PublishRequest(BaseModel):
 class DeprecateRequest(BaseModel):
     row_version: int = Field(ge=1)
     reason: str = Field(min_length=5)
+
+
+class CreateCollectionRequest(BaseModel):
+    title: str = Field(min_length=3, max_length=300)
+    slug: str | None = Field(default=None, max_length=160)
+    description: str = Field(default="", max_length=5000)
+    tags: list[str] = Field(default_factory=list, max_length=30)
+
+
+class UpdateCollectionRequest(BaseModel):
+    title: str | None = Field(default=None, min_length=3, max_length=300)
+    description: str | None = Field(default=None, max_length=5000)
+    tags: list[str] | None = Field(default=None, max_length=30)
+    row_version: int = Field(ge=1)
+
+
+class AddCollectionMemberRequest(BaseModel):
+    dataset_version_id: UUID
+    role: str = Field(default="member", min_length=1, max_length=80)
+    ordinal: int = Field(default=0, ge=0, le=10000)
+
+
+class ArchiveCollectionRequest(BaseModel):
+    row_version: int = Field(ge=1)
+    reason: str = Field(min_length=5, max_length=1000)
 
 
 class CreateGrantRequest(BaseModel):

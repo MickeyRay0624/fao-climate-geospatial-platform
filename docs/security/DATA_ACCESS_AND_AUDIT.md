@@ -50,6 +50,14 @@ Expired grants do not apply. Any matching explicit deny takes precedence over ro
 
 Authorized downloads return a short-lived MinIO GET URL and expiry, never a permanent access/secret key. Unauthorized responses do not reveal object keys. Sensitive previews and every download request create audit records. The local presign TTL defaults to 900 seconds and is configurable.
 
+Direct vector ingestion preserves the original ZIP/GeoPackage and stores any derived GeoJSON under a separate role, key and checksum. Source and derived downloads are independently selected but pass through the same authorization and audit boundary.
+
+## Extension field evidence
+
+Extension case reads are workspace- and assignment-aware. A supervisor has a wider operational view; an officer does not gain access to another officer's case merely by knowing an identifier. Completed observations/history are database-protected, and mutations require idempotency keys.
+
+Field images are `SENSITIVE_FIELD`, type/size bounded and stored under case-scoped object keys. Viewing requires `extension.media.view_sensitive`, an acceptable scan status and a new short-lived URL, and generates audit evidence. The service worker excludes Extension API and media responses from caching. The local scanner bypass remains a visible warning and cannot be enabled in production/staging.
+
 ## Audit contents
 
 `audit.events` records UTC time, workspace, actor, action, resource type/ID, outcome, reason, before/after summaries, correlation ID, and request context. Material events include:
@@ -65,6 +73,8 @@ Authorized downloads return a short-lived MinIO GET URL and expiry, never a perm
 - denied sensitive actions and future break-glass use.
 
 Sensitive keys, credentials, bearer tokens, and signed query values are redacted before storage. Audit search itself requires `audit.view`; viewer denial and auditor access are covered by tests.
+
+The governance audit view supports actor, action, resource, outcome, correlation-ID and UTC date filters plus a bounded CSV export. Administrative membership/group/role changes, knowledge decisions, application posture and permission denials are included in the same append-only evidence model.
 
 ## Append-only guarantee
 

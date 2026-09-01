@@ -78,6 +78,7 @@ services:
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       CELERY_TASK_ALWAYS_EAGER: ${CELERY_TASK_ALWAYS_EAGER:-false}
       ALLOW_INSECURE_DEV_FILE_SCAN: ${ALLOW_INSECURE_DEV_FILE_SCAN:-true}
+      BACKUP_EVIDENCE_PATH: ${BACKUP_EVIDENCE_PATH:-/workspace-backups}
       MAX_DATA_HUB_UPLOAD_BYTES: ${MAX_DATA_HUB_UPLOAD_BYTES:-104857600}
       CODE_VERSION_REF: ${CODE_VERSION_REF:-working-tree/local}
       CONTAINER_IMAGE_TAG: ${CONTAINER_IMAGE_TAG:-cambodia-rice-dss-api:local}
@@ -126,6 +127,7 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - ./api:/app
+      - ./backups:/workspace-backups:ro
     depends_on:
       seed:
         condition: service_completed_successfully

@@ -183,6 +183,23 @@ def input_set_payload(session: Session, item: InvestmentAnalysisInputSet) -> dic
         .where(InvestmentAnalysisInputMember.input_set_id == item.id)
         .order_by(InvestmentAnalysisInputMember.ordinal)
     ).all()
+    evidence_modes: set[str] = set()
+    for member in members:
+        version = session.get(CatalogDatasetVersion, member.dataset_version_id)
+        dataset = session.get(CatalogDataset, version.dataset_id) if version else None
+        if dataset and dataset.licence_code == "UNCONFIRMED-SOURCE-LICENCE":
+            evidence_modes.add("REAL_SAMPLE")
+        elif dataset and dataset.licence_code == "DEMO-ONLY":
+            evidence_modes.add("SYNTHETIC_DEMO")
+        elif dataset:
+            evidence_modes.add("GOVERNED")
+    evidence_mode = (
+        next(iter(evidence_modes))
+        if len(evidence_modes) == 1
+        else "MIXED"
+        if evidence_modes
+        else "EMPTY"
+    )
     return {
         "id": str(item.id),
         "workspace_id": str(item.workspace_id),
@@ -195,6 +212,7 @@ def input_set_payload(session: Session, item: InvestmentAnalysisInputSet) -> dic
         "strictest_classification": item.strictest_classification,
         "readiness": item.readiness_result,
         "warnings": item.warnings_json,
+        "evidence_mode": evidence_mode,
         "checksum": item.checksum,
         "created_by": str(item.created_by),
         "locked_by": str(item.locked_by) if item.locked_by else None,

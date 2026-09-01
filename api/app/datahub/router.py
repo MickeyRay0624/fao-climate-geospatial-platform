@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 import math
 import re
 from datetime import datetime, timedelta, timezone
@@ -9,6 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, Query, Request
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
+from shapely.geometry import mapping, shape
 
 from app.audit_service import record_event
 from app.authorization import assert_permission, require_dataset_access
@@ -17,11 +21,13 @@ from app.database import get_session
 from app.errors import PlatformError, conflict, not_found
 from app.identity import Principal, get_current_principal
 from app.jobs import process_upload_session
-from app.object_store import presigned_get, presigned_put, stat_object
+from app.object_store import get_bytes, presigned_get, presigned_put, stat_object
 from app.platform_models import (
     CatalogAsset,
     CatalogDataset,
     CatalogDatasetVersion,
+    Collection,
+    CollectionMember,
     Group,
     IdempotencyRecord,
     LineageEdge,
@@ -40,6 +46,9 @@ from app.platform_models import (
     WorkspaceMembership,
 )
 from app.datahub.schemas import (
+    AddCollectionMemberRequest,
+    ArchiveCollectionRequest,
+    CreateCollectionRequest,
     CreateDatasetRequest,
     CreateGrantRequest,
     CreateUploadSessionRequest,
@@ -48,6 +57,7 @@ from app.datahub.schemas import (
     PublishRequest,
     ReviewDecisionRequest,
     SubmitReviewRequest,
+    UpdateCollectionRequest,
     UpdateDatasetRequest,
     UpdateVersionRequest,
 )
@@ -123,13 +133,33 @@ def _dataset_summary(session: Session, dataset: CatalogDataset) -> dict[str, Any
         select(func.count(CatalogDatasetVersion.id)).where(CatalogDatasetVersion.dataset_id == dataset.id)
     ) or 0
     latest_quality = None
+    metadata = None
+    representation = None
     if current:
+        metadata = session.scalar(
+            select(MetadataRecord).where(MetadataRecord.dataset_version_id == current.id)
+        )
+        representation = session.scalar(
+            select(Representation)
+            .where(
+                Representation.dataset_version_id == current.id,
+                Representation.status == "READY",
+            )
+            .order_by(Representation.created_at.desc())
+            .limit(1)
+        )
         latest_quality = session.scalar(
             select(QualityRun)
             .where(QualityRun.dataset_version_id == current.id)
             .order_by(QualityRun.completed_at.desc().nulls_last())
             .limit(1)
         )
+    keywords = metadata.keywords if metadata else []
+    real_sample = (
+        dataset.licence_code == "UNCONFIRMED-SOURCE-LICENCE"
+        or "real-data-test" in keywords
+    )
+    synthetic = dataset.licence_code == "DEMO-ONLY" or "synthetic" in keywords
     return {
         "id": str(dataset.id),
         "workspace_id": str(dataset.workspace_id),
@@ -143,11 +173,42 @@ def _dataset_summary(session: Session, dataset: CatalogDataset) -> dict[str, Any
         "lifecycle_status": dataset.lifecycle_status,
         "licence_code": dataset.licence_code,
         "current_published_version": (
-            {"id": str(current.id), "version_label": current.version_label, "state": current.state}
+            {
+                "id": str(current.id),
+                "version_label": current.version_label,
+                "state": current.state,
+                "profile_key": current.profile_key,
+            }
             if current else None
         ),
         "version_count": version_count,
         "quality_status": latest_quality.status if latest_quality else None,
+        "tags": keywords,
+        "evidence_type": "REAL_SAMPLE" if real_sample else "SYNTHETIC_DEMO" if synthetic else "GOVERNED",
+        "licence_status": (
+            "NOT_CONFIRMED"
+            if dataset.licence_code == "UNCONFIRMED-SOURCE-LICENCE"
+            else "DECLARED"
+            if dataset.licence_code
+            else "NOT_DECLARED"
+        ),
+        "spatial": (
+            {
+                "crs": representation.crs,
+                "bbox": representation.bbox_json,
+                "geometry_type": representation.geometry_type,
+            }
+            if representation
+            else None
+        ),
+        "temporal": (
+            {
+                "start": representation.schema_json.get("time_start"),
+                "end": representation.schema_json.get("time_end"),
+            }
+            if representation
+            else None
+        ),
         "row_version": dataset.row_version,
         "created_at": dataset.created_at.isoformat() if dataset.created_at else None,
         "updated_at": dataset.updated_at.isoformat() if dataset.updated_at else None,
@@ -268,7 +329,10 @@ def list_datasets(
     state: str | None = None,
     visibility: str | None = None,
     classification: str | None = None,
+    quality: str | None = None,
+    tag: str | None = None,
     mine: bool = False,
+    scope: str | None = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     sort: str = "-updated_at",
@@ -285,8 +349,43 @@ def list_datasets(
         query = query.where(or_(CatalogDataset.title.ilike(term), CatalogDataset.abstract.ilike(term), CatalogDataset.slug.ilike(term)))
     if owner_id:
         query = query.where(CatalogDataset.owner_user_id == owner_id)
-    if mine:
+    if mine or scope == "owned":
         query = query.where(CatalogDataset.owner_user_id == principal.user_id)
+    elif scope == "contributed":
+        query = (
+            query.join(
+                CatalogDatasetVersion,
+                CatalogDatasetVersion.dataset_id == CatalogDataset.id,
+            )
+            .where(CatalogDatasetVersion.created_by == principal.user_id)
+            .distinct()
+        )
+    elif scope == "awaiting_action":
+        query = (
+            query.join(
+                CatalogDatasetVersion,
+                CatalogDatasetVersion.dataset_id == CatalogDataset.id,
+            )
+            .where(
+                or_(
+                    CatalogDataset.owner_user_id == principal.user_id,
+                    CatalogDatasetVersion.created_by == principal.user_id,
+                ),
+                CatalogDatasetVersion.state.in_(
+                    ["DRAFT", "VALIDATION_FAILED", "CHANGES_REQUESTED", "VALIDATED"]
+                ),
+            )
+            .distinct()
+        )
+    elif scope == "shared":
+        subjects = [principal.user_id, *principal.group_ids]
+        shared_ids = select(PermissionGrant.resource_id).where(
+            PermissionGrant.workspace_id == principal.active_workspace_id,
+            PermissionGrant.resource_type.in_(["dataset", "dataset_version"]),
+            PermissionGrant.subject_id.in_(subjects),
+            PermissionGrant.effect == "ALLOW",
+        )
+        query = query.where(CatalogDataset.id.in_(shared_ids))
     if data_kind:
         query = query.where(CatalogDataset.data_kind == data_kind)
     if visibility:
@@ -300,6 +399,16 @@ def list_datasets(
         item for item in candidates
         if require_dataset_access_or_false(session, principal, item, "dataset.view_metadata")
     ]
+    if quality or tag:
+        filtered: list[CatalogDataset] = []
+        for item in visible:
+            summary = _dataset_summary(session, item)
+            if quality and summary["quality_status"] != quality.upper():
+                continue
+            if tag and tag.lower() not in {str(value).lower() for value in summary["tags"]}:
+                continue
+            filtered.append(item)
+        visible = filtered
     reverse = sort.startswith("-")
     key = sort.lstrip("-")
     if key not in {"title", "created_at", "updated_at", "data_kind"}:
@@ -320,6 +429,376 @@ def require_dataset_access_or_false(session: Session, principal: Principal, data
         return True
     except PlatformError:
         return False
+
+
+def _can_manage_collection(principal: Principal, collection: Collection) -> bool:
+    return (
+        collection.owner_user_id == principal.user_id
+        or "workspace_admin" in principal.role_keys
+    )
+
+
+def _collection_payload(
+    session: Session,
+    principal: Principal,
+    collection: Collection,
+    *,
+    detail: bool = False,
+) -> dict[str, Any]:
+    owner = session.get(User, collection.owner_user_id)
+    members: list[dict[str, Any]] = []
+    rows = session.scalars(
+        select(CollectionMember)
+        .where(CollectionMember.collection_id == collection.id)
+        .order_by(CollectionMember.ordinal, CollectionMember.id)
+    ).all()
+    for member in rows:
+        version = session.get(CatalogDatasetVersion, member.dataset_version_id)
+        dataset = session.get(CatalogDataset, version.dataset_id) if version else None
+        if not dataset or not require_dataset_access_or_false(
+            session, principal, dataset, "dataset.view_metadata"
+        ):
+            continue
+        members.append(
+            {
+                "id": str(member.id),
+                "role": member.role,
+                "ordinal": member.ordinal,
+                "dataset": {
+                    "id": str(dataset.id),
+                    "slug": dataset.slug,
+                    "title": dataset.title,
+                    "classification": dataset.classification,
+                },
+                "version": {
+                    "id": str(version.id),
+                    "version_label": version.version_label,
+                    "state": version.state,
+                    "profile_key": version.profile_key,
+                },
+            }
+        )
+    return {
+        "id": str(collection.id),
+        "workspace_id": str(collection.workspace_id),
+        "slug": collection.slug,
+        "title": collection.title,
+        "description": collection.description,
+        "tags": collection.tags,
+        "status": collection.status,
+        "owner": {
+            "id": str(collection.owner_user_id),
+            "display_name": owner.display_name if owner else "Unknown",
+        },
+        "can_manage": _can_manage_collection(principal, collection),
+        "member_count": len(members),
+        "members": members if detail else None,
+        "row_version": collection.row_version,
+        "created_at": collection.created_at.isoformat() if collection.created_at else None,
+        "updated_at": collection.updated_at.isoformat() if collection.updated_at else None,
+    }
+
+
+def _require_collection(
+    session: Session, principal: Principal, collection_id: UUID
+) -> Collection:
+    collection = session.get(Collection, collection_id)
+    if collection is None or collection.workspace_id != principal.active_workspace_id:
+        raise not_found("Collection")
+    return collection
+
+
+@router.get("/collections")
+def list_collections(
+    search: str | None = None,
+    status: str = "ACTIVE",
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "data.catalog.enter")
+    query = select(Collection).where(
+        Collection.workspace_id == principal.active_workspace_id,
+        Collection.status == status.upper(),
+    )
+    if search:
+        term = f"%{search.strip()}%"
+        query = query.where(
+            or_(Collection.title.ilike(term), Collection.description.ilike(term))
+        )
+    total = session.scalar(select(func.count()).select_from(query.subquery())) or 0
+    rows = session.scalars(
+        query.order_by(Collection.updated_at.desc(), Collection.title)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    return {
+        "items": [_collection_payload(session, principal, item) for item in rows],
+        "meta": {"page": page, "page_size": page_size, "total": total},
+    }
+
+
+@router.post("/collections", status_code=201)
+def create_collection(
+    body: CreateCollectionRequest,
+    request: Request,
+    key: str = Depends(require_idempotency_key),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "collection.create")
+    path = f"/workspaces/{principal.active_workspace_id}/api/data/v1/collections"
+    cached = _cached(session, principal, key, "POST", path)
+    if cached:
+        return cached
+    slug = _slug(body.slug or body.title)
+    if session.scalar(
+        select(Collection.id).where(
+            Collection.workspace_id == principal.active_workspace_id,
+            Collection.slug == slug,
+        )
+    ):
+        raise conflict(
+            "COLLECTION_SLUG_CONFLICT",
+            "A collection with this workspace slug already exists.",
+            slug=slug,
+        )
+    item = Collection(
+        workspace_id=principal.active_workspace_id,
+        slug=slug,
+        title=body.title.strip(),
+        description=body.description.strip(),
+        tags=sorted({tag.strip() for tag in body.tags if tag.strip()}),
+        status="ACTIVE",
+        owner_user_id=principal.user_id,
+    )
+    session.add(item)
+    session.flush()
+    response = _collection_payload(session, principal, item, detail=True)
+    _remember(session, principal, key, "POST", path, response, status=201)
+    record_event(
+        session,
+        action="catalog.collection.create",
+        resource_type="collection",
+        resource_id=item.id,
+        outcome="success",
+        correlation_id=correlation_id(request),
+        actor_id=principal.user_id,
+        workspace_id=principal.active_workspace_id,
+        after={"slug": item.slug, "tags": item.tags},
+    )
+    session.commit()
+    return response
+
+
+@router.get("/collections/{collection_id}")
+def get_collection(
+    collection_id: UUID,
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "data.catalog.enter")
+    return _collection_payload(
+        session,
+        principal,
+        _require_collection(session, principal, collection_id),
+        detail=True,
+    )
+
+
+@router.patch("/collections/{collection_id}")
+def update_collection(
+    collection_id: UUID,
+    body: UpdateCollectionRequest,
+    request: Request,
+    key: str = Depends(require_idempotency_key),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "collection.manage")
+    path = f"/api/data/v1/collections/{collection_id}"
+    cached = _cached(session, principal, key, "PATCH", path)
+    if cached:
+        return cached
+    item = _require_collection(session, principal, collection_id)
+    if not _can_manage_collection(principal, item):
+        raise not_found("Collection")
+    if item.status != "ACTIVE":
+        raise conflict("COLLECTION_ARCHIVED", "An archived collection cannot be changed.")
+    if item.row_version != body.row_version:
+        raise conflict("ROW_VERSION_CONFLICT", "The collection changed; reload and retry.")
+    before = {"title": item.title, "description": item.description, "tags": item.tags}
+    if body.title is not None:
+        item.title = body.title.strip()
+    if body.description is not None:
+        item.description = body.description.strip()
+    if body.tags is not None:
+        item.tags = sorted({tag.strip() for tag in body.tags if tag.strip()})
+    item.row_version += 1
+    session.flush()
+    response = _collection_payload(session, principal, item, detail=True)
+    _remember(session, principal, key, "PATCH", path, response)
+    record_event(
+        session,
+        action="catalog.collection.update",
+        resource_type="collection",
+        resource_id=item.id,
+        outcome="success",
+        correlation_id=correlation_id(request),
+        actor_id=principal.user_id,
+        workspace_id=principal.active_workspace_id,
+        before=before,
+        after={"title": item.title, "description": item.description, "tags": item.tags},
+    )
+    session.commit()
+    return response
+
+
+@router.post("/collections/{collection_id}/members", status_code=201)
+def add_collection_member(
+    collection_id: UUID,
+    body: AddCollectionMemberRequest,
+    request: Request,
+    key: str = Depends(require_idempotency_key),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "collection.manage")
+    path = f"/api/data/v1/collections/{collection_id}/members"
+    cached = _cached(session, principal, key, "POST", path)
+    if cached:
+        return cached
+    item = _require_collection(session, principal, collection_id)
+    if not _can_manage_collection(principal, item):
+        raise not_found("Collection")
+    if item.status != "ACTIVE":
+        raise conflict("COLLECTION_ARCHIVED", "An archived collection cannot be changed.")
+    version = session.get(CatalogDatasetVersion, body.dataset_version_id)
+    dataset = session.get(CatalogDataset, version.dataset_id) if version else None
+    require_dataset_access(session, principal, dataset, "dataset.view_metadata")
+    existing = session.scalar(
+        select(CollectionMember).where(
+            CollectionMember.collection_id == item.id,
+            CollectionMember.dataset_version_id == version.id,
+        )
+    )
+    if existing:
+        response = _collection_payload(session, principal, item, detail=True)
+        _remember(session, principal, key, "POST", path, response, status=201)
+        session.commit()
+        return response
+    session.add(
+        CollectionMember(
+            collection_id=item.id,
+            dataset_id=dataset.id,
+            dataset_version_id=version.id,
+            role=body.role,
+            ordinal=body.ordinal,
+        )
+    )
+    item.row_version += 1
+    session.flush()
+    response = _collection_payload(session, principal, item, detail=True)
+    _remember(session, principal, key, "POST", path, response, status=201)
+    record_event(
+        session,
+        action="catalog.collection.member.add",
+        resource_type="collection",
+        resource_id=item.id,
+        outcome="success",
+        correlation_id=correlation_id(request),
+        actor_id=principal.user_id,
+        workspace_id=principal.active_workspace_id,
+        after={"dataset_version_id": str(version.id), "role": body.role},
+    )
+    session.commit()
+    return response
+
+
+@router.delete("/collections/{collection_id}/members/{member_id}")
+def remove_collection_member(
+    collection_id: UUID,
+    member_id: UUID,
+    request: Request,
+    row_version: int = Query(ge=1),
+    key: str = Depends(require_idempotency_key),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "collection.manage")
+    path = f"/api/data/v1/collections/{collection_id}/members/{member_id}"
+    cached = _cached(session, principal, key, "DELETE", path)
+    if cached:
+        return cached
+    item = _require_collection(session, principal, collection_id)
+    if not _can_manage_collection(principal, item):
+        raise not_found("Collection")
+    if item.status != "ACTIVE":
+        raise conflict("COLLECTION_ARCHIVED", "An archived collection cannot be changed.")
+    if item.row_version != row_version:
+        raise conflict("ROW_VERSION_CONFLICT", "The collection changed; reload and retry.")
+    member = session.get(CollectionMember, member_id)
+    if member is None or member.collection_id != item.id:
+        raise not_found("Collection member")
+    removed_version = member.dataset_version_id
+    session.delete(member)
+    item.row_version += 1
+    session.flush()
+    response = _collection_payload(session, principal, item, detail=True)
+    _remember(session, principal, key, "DELETE", path, response)
+    record_event(
+        session,
+        action="catalog.collection.member.remove",
+        resource_type="collection",
+        resource_id=item.id,
+        outcome="success",
+        correlation_id=correlation_id(request),
+        actor_id=principal.user_id,
+        workspace_id=principal.active_workspace_id,
+        before={"dataset_version_id": str(removed_version)},
+    )
+    session.commit()
+    return response
+
+
+@router.post("/collections/{collection_id}/archive")
+def archive_collection(
+    collection_id: UUID,
+    body: ArchiveCollectionRequest,
+    request: Request,
+    key: str = Depends(require_idempotency_key),
+    principal: Principal = Depends(get_current_principal),
+    session: Session = Depends(get_session),
+) -> dict[str, Any]:
+    assert_permission(principal, "collection.manage")
+    path = f"/api/data/v1/collections/{collection_id}/archive"
+    cached = _cached(session, principal, key, "POST", path)
+    if cached:
+        return cached
+    item = _require_collection(session, principal, collection_id)
+    if not _can_manage_collection(principal, item):
+        raise not_found("Collection")
+    if item.row_version != body.row_version:
+        raise conflict("ROW_VERSION_CONFLICT", "The collection changed; reload and retry.")
+    item.status = "ARCHIVED"
+    item.row_version += 1
+    session.flush()
+    response = _collection_payload(session, principal, item, detail=True)
+    _remember(session, principal, key, "POST", path, response)
+    record_event(
+        session,
+        action="catalog.collection.archive",
+        resource_type="collection",
+        resource_id=item.id,
+        outcome="success",
+        correlation_id=correlation_id(request),
+        actor_id=principal.user_id,
+        workspace_id=principal.active_workspace_id,
+        reason=body.reason,
+    )
+    session.commit()
+    return response
 
 
 @router.post("/datasets", status_code=201)
@@ -1147,43 +1626,190 @@ def delete_grant(
 def download_version(
     version_id: UUID,
     request: Request,
+    role: str = Query(default="source", pattern="^(source|derived-vector)$"),
     principal: Principal = Depends(get_current_principal),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     dataset, version = _dataset_for_version(session, version_id)
     require_dataset_access(session, principal, dataset, "dataset.download")
-    asset = session.scalar(select(CatalogAsset).where(CatalogAsset.dataset_version_id == version.id, CatalogAsset.role == "source").order_by(CatalogAsset.created_at).limit(1))
+    asset = session.scalar(select(CatalogAsset).where(CatalogAsset.dataset_version_id == version.id, CatalogAsset.role == role).order_by(CatalogAsset.created_at).limit(1))
     if asset is None:
         raise not_found("Download asset")
     expires_at = now() + timedelta(seconds=PRESIGNED_URL_TTL_SECONDS)
     record_event(
         session, action="catalog.asset.download", resource_type="dataset_version", resource_id=version.id,
         outcome="success", correlation_id=correlation_id(request), actor_id=principal.user_id,
-        workspace_id=principal.active_workspace_id, after={"expires_at": expires_at.isoformat(), "asset_id": str(asset.id)},
+        workspace_id=principal.active_workspace_id, after={"expires_at": expires_at.isoformat(), "asset_id": str(asset.id), "role": role},
     )
     session.commit()
     return {"url": presigned_get(asset.object_key), "expires_at": expires_at.isoformat(), "filename": asset.filename, "media_type": asset.media_type}
+
+
+def _vector_page(
+    payload: bytes,
+    *,
+    page: int,
+    page_size: int,
+    simplify_tolerance: float,
+) -> tuple[dict[str, Any], int]:
+    document = json.loads(payload.decode("utf-8-sig"))
+    features = document.get("features", []) if isinstance(document, dict) else []
+    if not isinstance(features, list):
+        raise ValueError("GeoJSON features must be an array")
+    preview_cap = min(len(features), 2000)
+    start = (page - 1) * page_size
+    selected = features[start : min(start + page_size, preview_cap)]
+    simplified: list[dict[str, Any]] = []
+    for feature in selected:
+        next_feature = dict(feature)
+        raw_geometry = feature.get("geometry")
+        if raw_geometry and simplify_tolerance > 0:
+            geometry = shape(raw_geometry)
+            if geometry.geom_type in {"Polygon", "MultiPolygon", "LineString", "MultiLineString"}:
+                next_feature["geometry"] = mapping(
+                    geometry.simplify(simplify_tolerance, preserve_topology=True)
+                )
+        simplified.append(next_feature)
+    return {"type": "FeatureCollection", "features": simplified}, len(features)
+
+
+def _table_page(
+    payload: bytes,
+    *,
+    page: int,
+    page_size: int,
+    redact_sensitive: bool,
+) -> tuple[list[dict[str, Any]], int, dict[str, Any]]:
+    rows = list(csv.DictReader(io.StringIO(payload.decode("utf-8-sig"))))
+    redacted_fields: list[str] = []
+    if redact_sensitive and rows:
+        protected = {"area_code", "admin_code", "case_code"}
+        redacted_fields = [
+            field
+            for field in rows[0]
+            if field not in protected
+            and re.search(r"(^|_)(name|phone|email|person|farmer|contact|identifier|id)($|_)", field, re.I)
+        ]
+    start = (page - 1) * page_size
+    selected = rows[start : start + page_size]
+    for row in selected:
+        for field in redacted_fields:
+            if row.get(field):
+                row[field] = "[REDACTED]"
+    sample = rows[:10000]
+    missing = {
+        field: sum(not str(row.get(field, "")).strip() for row in sample)
+        for field in (rows[0].keys() if rows else [])
+    }
+    return selected, len(rows), {
+        "missing_values": missing,
+        "sampled_rows": len(sample),
+        "approximate": len(rows) > len(sample),
+        "redacted_fields": redacted_fields,
+    }
 
 
 @router.get("/versions/{version_id}/preview")
 def preview_version(
     version_id: UUID,
     request: Request,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=25, ge=1, le=100),
+    simplify_tolerance: float = Query(default=0.002, ge=0, le=1),
     principal: Principal = Depends(get_current_principal),
     session: Session = Depends(get_session),
 ) -> dict[str, Any]:
     dataset, version = _dataset_for_version(session, version_id)
     require_dataset_access(session, principal, dataset, "dataset.preview")
-    representation = session.scalar(select(Representation).where(Representation.dataset_version_id == version.id, Representation.status == "READY").order_by(Representation.created_at.desc()).limit(1))
+    representation = session.scalar(
+        select(Representation)
+        .where(
+            Representation.dataset_version_id == version.id,
+            Representation.status == "READY",
+        )
+        .order_by(Representation.created_at.desc())
+        .limit(1)
+    )
+    asset = session.scalar(
+        select(CatalogAsset)
+        .where(CatalogAsset.dataset_version_id == version.id, CatalogAsset.role == "source")
+        .order_by(CatalogAsset.created_at)
+        .limit(1)
+    )
     if representation is None:
         raise not_found("Preview")
+    preview = representation.preview_json
+    total = int(representation.schema_json.get("record_count", 0) or 0)
+    statistics = dict(representation.statistics_json or {})
+    preview_kind = "metadata"
+    simplified = False
+    if asset:
+        try:
+            payload = get_bytes(asset.object_key)
+            if dataset.data_kind == "vector" or asset.filename.lower().endswith(
+                (".geojson", ".json")
+            ):
+                preview, total = _vector_page(
+                    payload,
+                    page=page,
+                    page_size=page_size,
+                    simplify_tolerance=simplify_tolerance,
+                )
+                preview_kind = "vector"
+                simplified = simplify_tolerance > 0
+            elif dataset.data_kind == "table" or asset.filename.lower().endswith(".csv"):
+                preview, total, table_statistics = _table_page(
+                    payload,
+                    page=page,
+                    page_size=page_size,
+                    redact_sensitive=dataset.classification == "SENSITIVE_FIELD",
+                )
+                statistics = {**statistics, **table_statistics}
+                preview_kind = "table"
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            preview_kind = "stored_sample"
+    if (
+        preview_kind == "stored_sample"
+        and isinstance(preview, dict)
+        and preview.get("type") == "FeatureCollection"
+    ):
+        stored_total = total
+        preview, _ = _vector_page(
+            json.dumps(preview).encode("utf-8"),
+            page=page,
+            page_size=page_size,
+            simplify_tolerance=simplify_tolerance,
+        )
+        total = stored_total
+        preview_kind = "vector"
+        simplified = simplify_tolerance > 0
+    visible_total = min(total, 2000) if preview_kind == "vector" else total
     record_event(
-        session, action="catalog.version.preview", resource_type="dataset_version", resource_id=version.id,
-        outcome="success", correlation_id=correlation_id(request), actor_id=principal.user_id,
+        session,
+        action="catalog.version.preview",
+        resource_type="dataset_version",
+        resource_id=version.id,
+        outcome="success",
+        correlation_id=correlation_id(request),
+        actor_id=principal.user_id,
         workspace_id=principal.active_workspace_id,
+        after={"page": page, "page_size": page_size, "preview_kind": preview_kind},
     )
     session.commit()
-    return {"representation_type": representation.representation_type, "preview": representation.preview_json, "schema": representation.schema_json, "statistics": representation.statistics_json}
+    return {
+        "representation_type": representation.representation_type,
+        "preview_kind": preview_kind,
+        "preview": preview,
+        "schema": representation.schema_json,
+        "statistics": statistics,
+        "bbox": representation.bbox_json,
+        "crs": representation.crs,
+        "geometry_type": representation.geometry_type,
+        "page": {"number": page, "size": page_size, "total": visible_total},
+        "simplified": simplified,
+        "source_asset_unchanged": True,
+        "display_cap": 2000 if preview_kind == "vector" else None,
+    }
 
 
 @router.get("/versions/{version_id}/lineage")

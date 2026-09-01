@@ -44,6 +44,7 @@ from app.models import (
 from app.object_store import ensure_bucket, get_bytes
 from app.schemas import AnalysisRequest
 from app.datahub.router import router as datahub_router
+from app.extension_router import router as extension_router
 from app.investment.router import router as investment_router
 from app.platform_router import (
     audit_router,
@@ -59,7 +60,7 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="FAO Climate Geospatial Data & Decision Platform API",
-    version="1.0.0-phase2a",
+    version="0.3.0-demo-platform",
     description=(
         "Versioned spatial data management and transparent multi-criteria analysis "
         "for a local demonstrator."
@@ -69,6 +70,7 @@ app = FastAPI(
 app.include_router(core_router)
 app.include_router(datahub_router)
 app.include_router(investment_router)
+app.include_router(extension_router)
 app.include_router(jobs_router)
 app.include_router(audit_router)
 app.include_router(governance_router)

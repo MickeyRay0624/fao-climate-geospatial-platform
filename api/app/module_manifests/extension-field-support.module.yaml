@@ -3,9 +3,9 @@ contract_version: "1.0"
 module:
   key: extension-field-support
   name: Extension Officer Field Support
-  version: 0.1.0
-  status: alpha
-  description: Mobile-first case, observation, verification, activity and follow-up workflow for extension officers.
+  version: 0.3.0
+  status: beta
+  description: Mobile-first manual case, observation, assessment, verification, activity and follow-up demonstration for extension officers.
 
 ownership:
   product_owner: fao-extension-and-climate-joint-team
@@ -41,6 +41,30 @@ routes:
     layout: adaptive
     offline_capable: true
     navigation: hidden
+  - path: /apps/extension-field-support/cases/:caseId/assessment
+    title: Field assessment
+    permissions: [apps.extension.use, extension.case.update_assigned]
+    layout: adaptive
+    offline_capable: true
+    navigation: hidden
+  - path: /apps/extension-field-support/cases/:caseId/verification
+    title: Verification
+    permissions: [apps.extension.use, extension.verification.complete]
+    layout: mobile
+    offline_capable: true
+    navigation: hidden
+  - path: /apps/extension-field-support/cases/:caseId/action
+    title: Activity plan
+    permissions: [apps.extension.use, extension.activity.plan]
+    layout: adaptive
+    offline_capable: true
+    navigation: hidden
+  - path: /apps/extension-field-support/activities
+    title: Activities
+    permissions: [apps.extension.use, extension.activity.plan]
+    layout: adaptive
+    offline_capable: true
+    navigation: secondary
   - path: /apps/extension-field-support/map
     title: Field map
     permissions: [apps.extension.use, extension.case.view_assigned]
@@ -79,6 +103,8 @@ permissions:
   declared:
     - code: apps.extension.use
       description: Enter the extension field-support application.
+    - code: apps.extension.supervise
+      description: Enter workspace supervision views.
     - code: extension.case.create
       description: Create a field case.
     - code: extension.case.view_assigned
@@ -99,10 +125,10 @@ permissions:
       description: Upload field media under restricted storage controls.
     - code: extension.media.view_sensitive
       description: View sensitive case media.
-    - code: extension.diagnosis.run
-      description: Generate ranked candidate causes from approved knowledge and rules.
-    - code: extension.diagnosis.confirm
-      description: Confirm or reject a candidate diagnosis.
+    - code: extension.assessment.record
+      description: Record a manually selected possible cause category and its evidence.
+    - code: extension.assessment.review
+      description: Review a manually recorded field assessment.
     - code: extension.verification.complete
       description: Complete a versioned field-verification checklist.
     - code: extension.activity.plan
@@ -113,6 +139,8 @@ permissions:
       description: Create and complete follow-up tasks.
     - code: extension.knowledge.edit
       description: Edit a draft agronomic knowledge version.
+    - code: extension.knowledge.view
+      description: View versioned demonstration knowledge templates.
     - code: extension.knowledge.review
       description: Review a knowledge version.
     - code: extension.knowledge.approve
@@ -130,7 +158,7 @@ data:
       allowed_states: [approved, published]
       multiple: true
       quality_profile: approved-agronomic-knowledge@1.0
-      notes: Every substantive diagnosis, verification item and recommendation must cite an approved knowledge version.
+      notes: Every manual category selection and verification item cites an exact demonstration knowledge version; no automated diagnosis or recommendation is produced.
     - role: reference_boundary
       profile: administrative-boundary
       version: "1.0"
@@ -196,12 +224,6 @@ jobs:
     max_attempts: 5
     cancellable: false
     visible_steps: [authorise, deduplicate, validate, merge, acknowledge]
-  - type: extension:generate-candidates:v1
-    queue: extension-reasoning
-    idempotent: true
-    max_attempts: 2
-    cancellable: true
-    visible_steps: [load-observations, retrieve-approved-knowledge, rank-candidates, cite-sources, save-draft]
   - type: extension:publish-aggregate:v1
     queue: geospatial-processing
     idempotent: true
@@ -228,8 +250,8 @@ audit:
   - extension.case.close
   - extension.media.upload
   - extension.media.view
-  - extension.diagnosis.generate
-  - extension.diagnosis.confirm
+  - extension.assessment.record
+  - extension.assessment.review
   - extension.verification.complete
   - extension.activity.approve
   - extension.knowledge.approve
@@ -237,7 +259,7 @@ audit:
 
 security:
   maximum_classification: sensitive_field
-  contains_personal_data: true
+  contains_personal_data: false
   contains_precise_location: true
   row_level_rules:
     - Extension officers may access only cases they created or are currently assigned unless a narrower grant applies.
@@ -268,12 +290,9 @@ feature_flags:
   - key: extension.offline_sync
     default: true
     description: Enable encrypted offline drafts and synchronisation.
-  - key: extension.candidate_reasoning
-    default: false
-    description: Enable ranked candidate causes only after agronomic governance approval.
-  - key: extension.language_model_explanation
-    default: false
-    description: Enable constrained translation and explanation with full source citations.
+  - key: extension.manual_assessment
+    default: true
+    description: Enable officer-selected possible cause categories with explicit evidence and supervisor review.
   - key: extension.aggregate_to_data_hub
     default: false
     description: Enable the governed aggregate publication workflow.
@@ -310,7 +329,7 @@ observability:
     - extension_overdue_followups_total
     - extension_offline_sync_conflicts_total
     - extension_media_processing_failures_total
-    - extension_candidate_confirmations_total
+    - extension_manual_assessments_total
   health_checks:
     - database
     - restricted_object_storage

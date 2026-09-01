@@ -11,7 +11,11 @@ import {
   getDataHubVersion,
   getDatasetGrants,
   getDevPersonas,
+  getExtensionCases,
+  getExtensionOverview,
+  getGovernanceSystemHealth,
   getJobs,
+  getHomeDashboard,
   getModules,
 } from "./api";
 import type { Capabilities, DataHubDataset, DataHubVersion, ProcessingJob } from "./platform/types";
@@ -23,11 +27,15 @@ vi.mock("./api", async () => {
     getCapabilities: vi.fn(),
     getDevPersonas: vi.fn(),
     getJobs: vi.fn(),
+    getHomeDashboard: vi.fn(),
     getModules: vi.fn(),
     getDataHubDatasets: vi.fn(),
     getDataHubDataset: vi.fn(),
     getDataHubVersion: vi.fn(),
     getDatasetGrants: vi.fn(),
+    getExtensionCases: vi.fn(),
+    getExtensionOverview: vi.fn(),
+    getGovernanceSystemHealth: vi.fn(),
   };
 });
 
@@ -55,6 +63,7 @@ const nav = {
   catalog: { path: "/data/catalog", title: "Team catalogue", section: "Data Hub", permission: "data.catalog.enter", icon: "database" },
   reviews: { path: "/data/reviews", title: "Reviews", section: "Data Hub", permission: "dataset.review", icon: "check" },
   investment: { path: "/apps/investment-prioritisation/overview", title: "Investment prioritisation", section: "Applications", permission: "apps.investment.use", module: "investment-prioritisation", icon: "map" },
+  extension: { path: "/apps/extension-field-support/worklist", title: "Extension field support", section: "Applications", permission: "apps.extension.use", module: "extension-field-support", icon: "users" },
   audit: { path: "/governance/audit", title: "Audit log", section: "Governance", permission: "audit.view", icon: "audit" },
 };
 
@@ -122,9 +131,14 @@ const governedDataset: DataHubDataset = {
   classification: "FAO_INTERNAL",
   lifecycle_status: "ACTIVE",
   licence_code: "TEST",
-  current_published_version: { id: "version-1", version_label: "1.0.0", state: "PUBLISHED" },
+  current_published_version: { id: "version-1", version_label: "1.0.0", state: "PUBLISHED", profile_key: "generic-vector@1.0" },
   version_count: 1,
   quality_status: "PASSED",
+  tags: ["test"],
+  evidence_type: "GOVERNED",
+  licence_status: "DECLARED",
+  spatial: { crs: "EPSG:4326", bbox: [104, 11, 105, 12], geometry_type: "Polygon" },
+  temporal: null,
   row_version: 2,
   created_at: "2026-08-31T00:00:00Z",
   updated_at: "2026-08-31T00:00:00Z",
@@ -144,11 +158,67 @@ beforeEach(() => {
     items: [{ id: "user-1", external_subject: "dev-admin", display_name: "Amina Sok", email: "amina@example.invalid", status: "active", locale: "en" }],
   });
   vi.mocked(getJobs).mockResolvedValue({ items: [], meta: { total: 0 } });
+  vi.mocked(getHomeDashboard).mockResolvedValue({
+    workspace: { id: "workspace-1", name: "Cambodia Rice Resilience" },
+    catalogue: { visible_datasets: 0, published_datasets: 0, real_samples: 0, recent: [] },
+    jobs: { active: 0, failed: 0 },
+    role_cards: {},
+    disclaimer: "Demonstration boundaries apply.",
+  });
   vi.mocked(getModules).mockResolvedValue({ items: [] });
   vi.mocked(getDataHubDatasets).mockResolvedValue({ items: [], meta: { page: 1, page_size: 20, total: 0, pages: 0, sort: "-updated_at" } });
   vi.mocked(getDataHubDataset).mockResolvedValue(governedDataset);
   vi.mocked(getDataHubVersion).mockResolvedValue(publishedVersion);
   vi.mocked(getDatasetGrants).mockResolvedValue({ items: [], meta: { total: 0 } });
+  vi.mocked(getExtensionOverview).mockResolvedValue({
+    non_ai: true,
+    demonstration: true,
+    counts: { assigned: 1 },
+    scanner_mode: "DEVELOPMENT_BYPASS",
+    disclaimer: "Fictional demonstration records; no automated advice.",
+  });
+  vi.mocked(getExtensionCases).mockResolvedValue({
+    items: [{
+      id: "case-1",
+      workspace_id: "workspace-1",
+      case_number: "DEMO-001",
+      title: "Fictional water-condition observation",
+      crop: "Rice",
+      growth_stage: "Tillering",
+      severity: "MODERATE",
+      affected_area_ha: 0.5,
+      location_label: "Fictional demo zone",
+      approximate_location: { lat: 11.5, lon: 104.9 },
+      priority: "HIGH",
+      status: "ASSIGNED",
+      notes: "Demonstration only.",
+      demonstration: true,
+      assignee: { id: "user-1", display_name: "Sreypov Mom" },
+      last_observation_at: null,
+      next_action: "Record a structured observation",
+      overdue_follow_ups: 1,
+      sync_status: "SYNCED",
+      row_version: 1,
+      created_at: "2026-09-01T00:00:00Z",
+      updated_at: "2026-09-01T00:00:00Z",
+    }],
+    meta: { total: 1 },
+  });
+  vi.mocked(getGovernanceSystemHealth).mockResolvedValue({
+    status: "OK",
+    services: {
+      database: { status: "OK" },
+      object_storage: { status: "OK" },
+      redis: { status: "OK" },
+      worker: { status: "OK" },
+      migrations: { status: "OK", current: "20260901_0005", expected: "20260901_0005" },
+      scanner: { status: "WARNING", mode: "DEVELOPMENT_BYPASS" },
+    },
+    queue_depth: 0,
+    latest_backup_evidence: { status: "LOCAL_EVIDENCE_PRESENT", created_at: "2026-09-01T00:00:00Z", database_dump: true, checksum_evidence: true, off_host: false },
+    environment: { name: "development", authentication: "dev", development_identity: true },
+    secrets_exposed: false,
+  });
 });
 
 afterEach(() => cleanup());
@@ -182,6 +252,38 @@ describe("platform shell and route policy", () => {
     renderRoute("/apps/investment-prioritisation/overview");
 
     expect(await screen.findByRole("heading", { name: "Native investment module test surface" })).toBeInTheDocument();
+  });
+
+  it("mounts the permission-scoped extension worklist with mobile navigation", async () => {
+    vi.mocked(getCapabilities).mockResolvedValue(capabilities(
+      ["workspace.view", "apps.extension.use", "extension.case.view_assigned"],
+      [nav.home, nav.extension],
+    ));
+    renderRoute("/apps/extension-field-support/worklist");
+
+    expect(await screen.findByRole("heading", { name: "Extension Officer Field Support" })).toBeInTheDocument();
+    expect(await screen.findByText("Fictional water-condition observation")).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Mobile extension navigation" })).toBeInTheDocument();
+    expect(screen.getByText("1 overdue follow-up")).toBeInTheDocument();
+  });
+
+  it("renders live governance health only with the health capability", async () => {
+    vi.mocked(getCapabilities).mockResolvedValue(capabilities(
+      ["workspace.view", "system.health.view"],
+      [nav.home],
+    ));
+    renderRoute("/governance/system-health");
+
+    expect(await screen.findByRole("heading", { name: "System health" })).toBeInTheDocument();
+    expect(await screen.findByText("LOCAL EVIDENCE PRESENT")).toBeInTheDocument();
+    expect(screen.getByText("No secrets exposed")).toBeInTheDocument();
+  });
+
+  it("routes every help topic without requiring an application capability", async () => {
+    renderRoute("/help/data-and-method-limitations");
+
+    expect(await screen.findByRole("heading", { name: "Data and method limitations" })).toBeInTheDocument();
+    expect(screen.getByText(/FAO SSO, approved malware scanning/)).toBeInTheDocument();
   });
 });
 
