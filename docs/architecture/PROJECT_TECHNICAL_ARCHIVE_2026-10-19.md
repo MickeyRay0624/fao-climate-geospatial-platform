@@ -9185,7 +9185,7 @@ Generate the polished English platform user guide from its Markdown source.
 | [deploy/minio/README.md](../../deploy/minio/README.md) | 1,372 | `c35121ef4fd42c4e563dd96e5c39194b58fc564baf0e91c6973ec2e7d72694cb` |
 | [deploy/nginx-dss-http.conf](../../deploy/nginx-dss-http.conf) | 249 | `a0455bd867e413ebcaa62129cf63c53fd4d2cea140f2ac5e414f567aed00f205` |
 | [deploy/nginx-dss.conf](../../deploy/nginx-dss.conf) | 2,780 | `c4ecaa50f0bf16f3115211645f45fb6e06b9f4e72727f6010b8df2cc640dde53` |
-| [docker-compose.yml](../../docker-compose.yml) | 6,471 | `c26d6018c75369843d36d9ce48d7a225a7fd1155c896496cbd3aa8ed4252febb` |
+| [docker-compose.yml](../../docker-compose.yml) | 6,546 | `61068eebdffa257828cb0fa47c4dc9dc352138016f6e299765fece299533dbdc` |
 | [docs/adr/ADR-001-platform-positioning.md](../adr/ADR-001-platform-positioning.md) | 1,169 | `263f8f26db26788a327de8c8c7920fbae875a723caa9103cd59141edea51da27` |
 | [docs/adr/ADR-002-single-authoritative-catalog.md](../adr/ADR-002-single-authoritative-catalog.md) | 1,131 | `1d08ac8346ba5918ad23af3bf6494f9ebe9e9032b4b1d56583ce50d4b6217fff` |
 | [docs/adr/ADR-003-modular-monolith.md](../adr/ADR-003-modular-monolith.md) | 1,101 | `3dc5d5146395194acd51bbfac24759f384fd34ca4551a2f10bf1db86edab8cbb` |
