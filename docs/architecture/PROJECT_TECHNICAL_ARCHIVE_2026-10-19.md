@@ -9106,7 +9106,7 @@ Generate the polished English platform user guide from its Markdown source.
 | [.gitignore](../../.gitignore) | 346 | `8ddbb05805f106240b5ee11d0190e5641d370379cca29950f3e98a959f7f1352` |
 | [CONTRIBUTING.md](../../CONTRIBUTING.md) | 1,868 | `a79b074b254b0a88e5e7959f56f7b97017ebf71d9554f9d8f3d1b4daeef3a493` |
 | [Makefile](../../Makefile) | 365 | `57d3e600d954c0f4ffb7018ac783ad24033ed7fa63ad29eeba78efbb19230d3e` |
-| [README.md](../../README.md) | 12,254 | `d71de04b36a2753c73c5dcbeb7f397b4cebf99cabc5e9a479c1c295142f2f1cc` |
+| [README.md](../../README.md) | 13,857 | `c71120b58645e4deecb17b2a4541760f8de64c4359dd57e28c465a8f27117ffa` |
 | [SECURITY.md](../../SECURITY.md) | 1,633 | `5e20a749d823a200d9540f3e2e05c3247631d1bf29a2557e3ed13fcc1749a424` |
 | [api/.dockerignore](../../api/.dockerignore) | 43 | `320ea133c0b24b67a51d7deadb11b63a473d35f88159237ad8e09ec1f6a7f0e2` |
 | [api/Dockerfile](../../api/Dockerfile) | 410 | `62a0785446237fa14a2a1de05207a04cfd6f66441b424ccbe2ca1002489c7c04` |
@@ -9554,6 +9554,6 @@ Generate the polished English platform user guide from its Markdown source.
 
 本公开版保留10月19日的架构、API、模型、请求契约、前端类型和模块规范快照，整理为可在GitHub阅读的相对链接。文件清单限定于仓库源代码和公开文档。内部咨询、原始GIS资料、恢复证据和本地工作记录未发布。
 
-10月21日同步还包含存储内外网传输配置、原文件名下载、结果地图入口、角色说明、服务器演示模板、用户指南、依赖安全补丁，以及从同版本官方发布文件校验构建MinIO镜像的恢复方案；相关新增测试与执行结果以本次PR/CI为准。历史快照中的测试数量和依赖版本不作为最新CI或npm audit结果。
+10月21日同步还包含存储内外网传输配置、原文件名下载、结果地图入口、角色说明、服务器演示模板、用户指南、README服务器访问入口、依赖安全补丁，以及从同版本官方发布文件校验构建MinIO镜像的恢复方案；相关新增测试与执行结果以本次PR/CI为准。历史快照中的测试数量和依赖版本不作为最新CI或npm audit结果。
 
 本地完整档案保留在原位置，未因发布仓库版本被覆盖。发布不执行服务器部署、数据库迁移或持久化数据更改。

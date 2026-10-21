@@ -1,8 +1,34 @@
 # FAO Climate Geospatial Data & Decision Platform
 
-This public repository is a runnable local demonstration platform: a shared application shell, governed geospatial Data Hub, native Investment Prioritisation, and a manual Extension Officer Field Support workflow for the preserved Cambodia rice-resilience demonstration.
+This public repository contains the platform deployed on the project demonstration server at [dss.lmqstudio.com](https://dss.lmqstudio.com/home), together with its local development stack: a shared application shell, governed geospatial Data Hub, native Investment Prioritisation, and a manual Extension Officer Field Support workflow for the preserved Cambodia rice-resilience demonstration.
 
 The investment results are **synthetic demonstration data** for 111 illustrative communes. Two separately catalogued samples derived from real external sources demonstrate native boundary and indicator contracts, but their source licences remain unconfirmed and they are not operational inputs. Nothing in this repository is an official boundary, field observation, operational advice, field-scale digital twin, or endorsed FAO methodology.
+
+## Server demonstration
+
+Open the deployed application using these HTTPS addresses. No local Docker
+installation is required to access the server.
+
+| Entry | Server URL |
+|---|---|
+| Platform home | [dss.lmqstudio.com/home](https://dss.lmqstudio.com/home) |
+| Data Hub | [Data catalog](https://dss.lmqstudio.com/data/catalog) |
+| Investment Prioritisation | [Investment overview](https://dss.lmqstudio.com/apps/investment-prioritisation/overview) |
+| Extension Field Support | [Officer worklist](https://dss.lmqstudio.com/apps/extension-field-support/worklist) |
+| Governance health | [System health](https://dss.lmqstudio.com/governance/system-health) |
+| Demonstration guide | [Demo guide](https://dss.lmqstudio.com/help/demo-guide) |
+| API documentation | [OpenAPI / Swagger UI](https://dss.lmqstudio.com/docs) |
+| API health | [Health response](https://dss.lmqstudio.com/health) |
+
+The server uses HTTPS ingress and the deployment configuration in
+[`deploy/`](deploy/README.md). Browser uploads and downloads use short-lived
+signed URLs on `storage.dss.lmqstudio.com`. The API and container ports remain
+behind the host reverse proxy; users should access the HTTPS addresses above.
+
+This is a hosted demonstration with visibly labelled development identities
+and a development file-scan bypass. It is intended for synthetic
+demonstration content and has not been approved as an institutional
+production service.
 
 ## Implemented in this increment
 
@@ -25,11 +51,11 @@ The investment results are **synthetic demonstration data** for 111 illustrative
 - Controlled single-layer Shapefile ZIP and GeoPackage validation with archive safety controls, source preservation, derived WGS84 GeoJSON previews, checksums, downloads, and lineage.
 - Nested help and demonstration-guide routes, deterministic seed data, responsive/PWA behavior, and a non-destructive reset runbook.
 
-Not implemented: production FAO SSO connection, an approved production malware scanner, cloud deployment, raster/COG/STAC processing ([issue #5](https://github.com/MickeyRay0624/fao-climate-geospatial-platform/issues/5)), full PostGIS materialisation and multi-layer vector selection ([issue #4](https://github.com/MickeyRay0624/fao-climate-geospatial-platform/issues/4)), GeoParquet/PDF investment exports, business endorsement of the method, or automated/agronomic advice.
+Not implemented: production FAO SSO connection, an approved production malware scanner, institutional production deployment, raster/COG/STAC processing ([issue #5](https://github.com/MickeyRay0624/fao-climate-geospatial-platform/issues/5)), full PostGIS materialisation and multi-layer vector selection ([issue #4](https://github.com/MickeyRay0624/fao-climate-geospatial-platform/issues/4)), GeoParquet/PDF investment exports, business endorsement of the method, or automated/agronomic advice.
 
-The source repository is public. The default Compose stack binds to host loopback. An optional hosted demonstration configuration is available in [`deploy/`](deploy/README.md); it retains visibly labelled development identities and the scanner bypass and is suitable only for synthetic demonstration content. Neither configuration is an approved production service.
+The source repository is public. The hosted server uses [`deploy/`](deploy/README.md); the default root Compose file provides local development with host-loopback bindings.
 
-## Local architecture
+## System architecture
 
 ```text
 Browser (React + TypeScript)
@@ -46,7 +72,11 @@ The new catalog is authoritative for dataset metadata and `investment.*` is auth
 The legacy investment catalogue URLs remain as read adapters over the authoritative catalog and deterministic backfill mappings. Their former upload/publish mutations return `410 LEGACY_CATALOG_READ_ONLY`, preventing dual writes while preserving the existing UI contract.
 The former legacy analysis mutation returns `410 LEGACY_ANALYSIS_READ_ONLY`; no compatibility flag permits dual writes.
 
-## Start locally
+## Local development
+
+The following commands and `localhost` addresses apply when running a separate
+development copy on your own computer. To use the deployed server, open the
+[server demonstration](#server-demonstration) links above.
 
 Requirements: Docker Desktop with Docker Compose.
 
@@ -63,7 +93,7 @@ MinIO is built from the same pinned official release binary, with SHA-256
 verification, because the previous registry image is unavailable. See
 [`deploy/minio/`](deploy/minio/README.md) for the build and source details.
 
-Open:
+Local development URLs:
 
 - Platform: <http://localhost:3001/home>
 - Data Hub: <http://localhost:3001/data/catalog>
