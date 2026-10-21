@@ -1,5 +1,8 @@
 .DS_Store
 .env
+.env.*
+!.env.example
+!.env.*.example
 .env.*.local
 __pycache__/
 *.py[cod]
@@ -18,3 +21,5 @@ CODEX_PROMPT_*.md
 CHATGPT_*.md
 PROJECT_HANDOFF_CONTEXT_*.md
 HIH_REAL_DATA_PLATFORM_TEST_REPORT_*.md
+docs/it-approval/
+docs/user-guide/*.docx

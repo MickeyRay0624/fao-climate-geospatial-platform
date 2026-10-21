@@ -361,6 +361,16 @@ export function getVersionDownload(versionId: string, role = "source"): Promise<
   return requestJson(`/api/data/v1/versions/${versionId}/download?role=${encodeURIComponent(role)}`);
 }
 
+export function startFileDownload(url: string, filename: string): void {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.style.display = "none";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
+
 export function getAuditEvents(params: URLSearchParams = new URLSearchParams()): Promise<AuditList> {
   const query = params.toString();
   return requestJson<AuditList>(`/api/audit/v1/events${query ? `?${query}` : ""}`);

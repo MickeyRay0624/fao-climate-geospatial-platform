@@ -26,7 +26,10 @@ services:
     restart: unless-stopped
 
   minio:
-    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    build:
+      context: ./deploy/minio
+    image: cambodia-rice-dss-minio:RELEASE.2025-07-23T15-54-02Z
+    pull_policy: build
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dss_local_admin}
@@ -70,6 +73,7 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-dss-data}
       OBJECT_STORE_BUCKET: ${OBJECT_STORE_BUCKET:-${MINIO_BUCKET:-dss-data}}
       OBJECT_STORE_INTERNAL_ENDPOINT: ${OBJECT_STORE_INTERNAL_ENDPOINT:-minio:9000}
+      OBJECT_STORE_INTERNAL_SECURE: ${OBJECT_STORE_INTERNAL_SECURE:-false}
       OBJECT_STORE_PUBLIC_ENDPOINT: ${OBJECT_STORE_PUBLIC_ENDPOINT:-localhost:9000}
       OBJECT_STORE_SECURE: ${OBJECT_STORE_SECURE:-false}
       PRESIGNED_URL_TTL_SECONDS: ${PRESIGNED_URL_TTL_SECONDS:-900}

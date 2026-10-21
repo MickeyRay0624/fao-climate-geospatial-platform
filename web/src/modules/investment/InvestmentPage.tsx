@@ -71,7 +71,7 @@ function StateBadge({ value }: { value: string }) {
 function ModuleNav() {
   return (
     <nav className="native-module-nav" aria-label="Investment prioritisation">
-      <Link to={`${modulePath}/overview`}>Overview</Link><Link to={`${modulePath}/new-run`}>New run</Link>
+      <Link to={`${modulePath}/overview`}>Overview</Link><Link to={`${modulePath}/results`}>Results map</Link><Link to={`${modulePath}/new-run`}>New run</Link>
       <Link to={`${modulePath}/runs`}>Run history</Link><Link to={`${modulePath}/input-sets`}>Input sets</Link>
       <Link to={`${modulePath}/compare`}>Compare</Link><Link to={`${modulePath}/methods`}>Methods</Link>
       <Link to={`${modulePath}/scenarios`}>Scenarios</Link><Link to={`${modulePath}/readiness`}>Real-data readiness</Link>
@@ -128,7 +128,7 @@ function OverviewPage() {
   const recent = overview.recent_runs as NativeRun[];
   return (
     <>
-      <section className="native-hero panel"><div><p className="section-kicker">Installed application · governed analysis</p><h2>Prioritise investments from exact, approved inputs.</h2><p>Runs are explicit, asynchronous and reproducible. Opening this page never starts an analysis. Real source samples remain separate from the deterministic synthetic demonstration.</p></div><div className="native-hero-actions"><Link className="primary-button native-link-button" to={`${modulePath}/new-run`}>Run synthetic demonstration</Link><Link className="secondary-button native-link-button" to={`${modulePath}/readiness`}>Review real-data gaps</Link></div></section>
+      <section className="native-hero panel"><div><p className="section-kicker">Installed application · governed analysis</p><h2>Prioritise investments from exact, approved inputs.</h2><p>Runs are explicit, asynchronous and reproducible. Opening this page never starts an analysis. Real source samples remain separate from the deterministic synthetic demonstration.</p></div><div className="native-hero-actions"><Link className="primary-button native-link-button" to={`${modulePath}/results`}>Open results map</Link><Link className="secondary-button native-link-button" to={`${modulePath}/new-run`}>Run synthetic demonstration</Link><Link className="secondary-button native-link-button" to={`${modulePath}/readiness`}>Review real-data gaps</Link></div></section>
       <div className="result-summary-grid native-summary"><article><span>Locked input sets</span><strong>{counts.locked_input_sets}</strong></article><article><span>Approved scenarios</span><strong>{counts.approved_scenarios}</strong></article><article><span>Recorded runs</span><strong>{counts.runs}</strong></article><article><span>Write authority</span><strong className="small-authority">investment.*</strong></article></div>
       {readiness && <section className="panel native-readiness-callout"><div><p className="section-kicker">Real-data pilot readiness</p><h2>{readiness.ready_to_run ? "Ready" : "Not ready"}</h2><p>{readiness.available_indicator_roles.length} of 7 required indicator roles available. Exact source lineage is visible, but missing roles and method mapping prevent a real run.</p></div><div><StateBadge value={readiness.readiness_state} /><Link to={`${modulePath}/readiness`}>Open gap assessment →</Link></div></section>}
       <section className="panel native-list-card"><div className="section-title-row"><div><p className="section-kicker">Recent evidence</p><h2>Latest analysis runs</h2></div><Link to={`${modulePath}/runs`}>View all</Link></div><RunTable runs={recent} /></section>
@@ -279,6 +279,25 @@ function ComparePage() {
   return <>{error && <ErrorNotice error={error} />}<section className="panel native-list-card"><p className="section-kicker">Explicit read-only comparison</p><h2>Compare two completed runs</h2><p className="muted compact">This action computes differences from immutable results and never creates analysis runs.</p><div className="native-form-grid"><label>Left run<select value={left} onChange={(event) => setLeft(event.target.value)}>{runs.map((run) => <option value={run.id} key={run.id}>{short(run.id, 8)} · {run.scenario.name}</option>)}</select></label><label>Right run<select value={right} onChange={(event) => setRight(event.target.value)}>{runs.map((run) => <option value={run.id} key={run.id}>{short(run.id, 8)} · {run.scenario.name}</option>)}</select></label><button className="primary-button" type="button" disabled={!left || !right || left === right} onClick={() => void compare()}>Create comparison evidence</button></div>{comparison && <div className="comparison-evidence"><div><span>Areas</span><strong>{comparison.summary.area_count}</strong></div><div><span>Changed bands</span><strong>{comparison.summary.changed_bands}</strong></div><div><span>Eligibility changes</span><strong>{comparison.summary.eligibility_changes}</strong></div><div><span>Top-N overlap</span><strong>{comparison.summary.top_n_overlap}</strong></div><p>Checksum <code>{comparison.checksum}</code></p></div>}</section></>;
 }
 
+function LatestResultsPage() {
+  const [run, setRun] = useState<NativeRun | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    void getInvestmentRuns()
+      .then((response) => {
+        const completed = response.items
+          .filter((item) => item.status.startsWith("succeeded") && item.result_count > 0)
+          .sort((left, right) => right.requested_at.localeCompare(left.requested_at));
+        setRun(completed[0] ?? null);
+      })
+      .catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
+  }, []);
+  if (error) return <ErrorNotice error={error} />;
+  if (run === undefined) return <Loading />;
+  if (run === null) return <section className="platform-empty-state"><span>⌖</span><h2>No results map is available yet</h2><p>Complete an analysis run first; its interactive map, ranking and downloads will appear here.</p><Link className="primary-button native-link-button" to={`${modulePath}/new-run`}>Create a run</Link></section>;
+  return <Navigate replace to={`${modulePath}/runs/${run.id}`} />;
+}
+
 function RunDetailPage() {
   const { runId = "" } = useParams();
   const { capabilities } = usePlatform();
@@ -308,7 +327,7 @@ function InvestmentPage() {
   return (
     <main className="investment-module native-investment-module">
       <header className="legacy-module-header native-module-header"><div><p className="section-kicker">Installed application · native governed workflow</p><h1>Investment Prioritisation</h1><p>Governed exact inputs · approved methods · durable jobs · catalogued outputs</p></div><ModuleNav /></header>
-      <Routes><Route index element={<Navigate replace to="overview" />} /><Route path="overview" element={<OverviewPage />} /><Route path="new-run" element={<NewRunPage />} /><Route path="runs" element={<RunsPage />} /><Route path="runs/:runId" element={<RunDetailPage />} /><Route path="input-sets" element={<InputSetsPage />} /><Route path="input-sets/new" element={<InputSetNewPage />} /><Route path="input-sets/:inputSetId" element={<InputSetDetailPage />} /><Route path="compare" element={<ComparePage />} /><Route path="methods" element={<MethodsPage />} /><Route path="methods/:methodVersionId" element={<MethodVersionDetailPage />} /><Route path="scenarios" element={<ScenariosPage />} /><Route path="readiness" element={<ReadinessPage />} /><Route path="*" element={<Navigate replace to="overview" />} /></Routes>
+      <Routes><Route index element={<Navigate replace to="overview" />} /><Route path="overview" element={<OverviewPage />} /><Route path="results" element={<LatestResultsPage />} /><Route path="map" element={<LatestResultsPage />} /><Route path="new-run" element={<NewRunPage />} /><Route path="runs" element={<RunsPage />} /><Route path="runs/:runId" element={<RunDetailPage />} /><Route path="input-sets" element={<InputSetsPage />} /><Route path="input-sets/new" element={<InputSetNewPage />} /><Route path="input-sets/:inputSetId" element={<InputSetDetailPage />} /><Route path="compare" element={<ComparePage />} /><Route path="methods" element={<MethodsPage />} /><Route path="methods/:methodVersionId" element={<MethodVersionDetailPage />} /><Route path="scenarios" element={<ScenariosPage />} /><Route path="readiness" element={<ReadinessPage />} /><Route path="*" element={<Navigate replace to="overview" />} /></Routes>
       <footer className="app-footer"><span>Real samples, synthetic evidence and illustrative methods are labelled separately — no operational or funding decisions.</span><span>Native investment.* authority · exact catalog lineage · short-lived downloads</span></footer>
     </main>
   );

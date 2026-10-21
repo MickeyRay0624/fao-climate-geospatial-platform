@@ -1,4 +1,4 @@
-const CACHE = "fao-extension-shell-v1";
+const CACHE = "fao-extension-shell-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/extension-icon.svg"];
 
 self.addEventListener("install", (event) => {
@@ -13,8 +13,11 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  const sensitive = url.pathname.includes("/media/") || url.pathname.includes("/api/apps/extension-field-support/");
-  if (event.request.method !== "GET" || sensitive) return;
+  const neverCache =
+    url.pathname.startsWith("/api/")
+    || url.pathname.startsWith("/objects/")
+    || url.pathname.includes("/media/");
+  if (event.request.method !== "GET" || neverCache) return;
   if (event.request.mode === "navigate") {
     event.respondWith(fetch(event.request).catch(() => caches.match("/")));
     return;

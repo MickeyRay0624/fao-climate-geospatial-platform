@@ -27,7 +27,7 @@ The investment results are **synthetic demonstration data** for 111 illustrative
 
 Not implemented: production FAO SSO connection, an approved production malware scanner, cloud deployment, raster/COG/STAC processing ([issue #5](https://github.com/MickeyRay0624/fao-climate-geospatial-platform/issues/5)), full PostGIS materialisation and multi-layer vector selection ([issue #4](https://github.com/MickeyRay0624/fao-climate-geospatial-platform/issues/4)), GeoParquet/PDF investment exports, business endorsement of the method, or automated/agronomic advice.
 
-The source repository is public. The running application remains a loopback-only local demonstration and is not a public or production service.
+The source repository is public. The default Compose stack binds to host loopback. An optional hosted demonstration configuration is available in [`deploy/`](deploy/README.md); it retains visibly labelled development identities and the scanner bypass and is suitable only for synthetic demonstration content. Neither configuration is an approved production service.
 
 ## Local architecture
 
@@ -51,13 +51,17 @@ The former legacy analysis mutation returns `410 LEGACY_ANALYSIS_READ_ONLY`; no 
 Requirements: Docker Desktop with Docker Compose.
 
 ```bash
-cd "/Users/lei/Documents/联合国工作/数字孪生/cambodia-rice-dss"
+cd cambodia-rice-dss
 cp .env.example .env
 docker compose up --build -d
 docker compose ps -a
 ```
 
 Compose waits for PostgreSQL, runs `alembic upgrade head`, executes the idempotent seed, and then starts the API, worker, and web application. Re-running the command is safe.
+
+MinIO is built from the same pinned official release binary, with SHA-256
+verification, because the previous registry image is unavailable. See
+[`deploy/minio/`](deploy/minio/README.md) for the build and source details.
 
 Open:
 
@@ -159,6 +163,9 @@ The database-trigger command is documented in [LOCAL_DEVELOPMENT.md](docs/runboo
 
 ## Documentation
 
+- [Complete technical archive (Chinese, 19 October 2026 snapshot)](docs/architecture/PROJECT_TECHNICAL_ARCHIVE_2026-10-19.md)
+- [User guide, capabilities and roadmap](docs/user-guide/Climate_Geospatial_DSS_User_Guide_2026-09-02.md)
+- [Hosted demonstration deployment](deploy/README.md)
 - [Implementation report](docs/implementation/FOUNDATION_DATA_HUB_IMPLEMENTATION.md)
 - [Phase 2A investment implementation](docs/implementation/INVESTMENT_NATIVE_MIGRATION.md)
 - [Platform architecture overview](docs/architecture/PLATFORM_OVERVIEW.md)
