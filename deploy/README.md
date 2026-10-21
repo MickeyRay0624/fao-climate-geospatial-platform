@@ -14,6 +14,10 @@ Nginx virtual hosts.
 - PostgreSQL and Redis have no host port.
 - GeoServer is intentionally excluded from the small demo server.
 
+The MinIO service uses the [project-local pinned image](minio/README.md),
+built from checksum-verified official release files. Building does not change
+the server version or the existing MinIO data volume.
+
 The application remains in visibly labelled development-identity mode because
 an approved OIDC provider is not connected. Only synthetic demonstration data
 may be exposed while the ingress password gate is disabled.

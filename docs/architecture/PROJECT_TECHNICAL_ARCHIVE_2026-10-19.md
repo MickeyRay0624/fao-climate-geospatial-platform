@@ -9106,7 +9106,7 @@ Generate the polished English platform user guide from its Markdown source.
 | [.gitignore](../../.gitignore) | 346 | `8ddbb05805f106240b5ee11d0190e5641d370379cca29950f3e98a959f7f1352` |
 | [CONTRIBUTING.md](../../CONTRIBUTING.md) | 1,868 | `a79b074b254b0a88e5e7959f56f7b97017ebf71d9554f9d8f3d1b4daeef3a493` |
 | [Makefile](../../Makefile) | 365 | `57d3e600d954c0f4ffb7018ac783ad24033ed7fa63ad29eeba78efbb19230d3e` |
-| [README.md](../../README.md) | 12,085 | `6a7fe060e1d8d3d5393df4a32d33fcde7eeff919c5c31452e6637c14de7eca9d` |
+| [README.md](../../README.md) | 12,254 | `d71de04b36a2753c73c5dcbeb7f397b4cebf99cabc5e9a479c1c295142f2f1cc` |
 | [SECURITY.md](../../SECURITY.md) | 1,633 | `5e20a749d823a200d9540f3e2e05c3247631d1bf29a2557e3ed13fcc1749a424` |
 | [api/.dockerignore](../../api/.dockerignore) | 43 | `320ea133c0b24b67a51d7deadb11b63a473d35f88159237ad8e09ec1f6a7f0e2` |
 | [api/Dockerfile](../../api/Dockerfile) | 410 | `62a0785446237fa14a2a1de05207a04cfd6f66441b424ccbe2ca1002489c7c04` |
@@ -9178,11 +9178,14 @@ Generate the polished English platform user guide from its Markdown source.
 | [api/tests/test_object_store.py](../../api/tests/test_object_store.py) | 2,414 | `6127b04a79c7b06e171dfd0f02c57591f180fb6a6a6a84352affdfcc67a7a3cc` |
 | [api/tests/test_platform_contracts.py](../../api/tests/test_platform_contracts.py) | 5,419 | `4554300647c12f41f785c15caac784b3f533605f16118b8bc39d2c9042fbe34d` |
 | [deploy/.env.production.example](../../deploy/.env.production.example) | 532 | `15dda2d926960ecd3e7a81cdd5e70c3db881e11db72fd86e8a5e5af61d41062c` |
-| [deploy/README.md](../../deploy/README.md) | 3,446 | `43caffd481afaca605ba8d344c0fc62fb9d46f72baab31c4bc54822151303df7` |
-| [deploy/docker-compose.production.yml](../../deploy/docker-compose.production.yml) | 5,092 | `b51c92766bc82ecf227d711114f7e6c0edd02e103dcd67a95634d37a02fa3393` |
+| [deploy/README.md](../../deploy/README.md) | 3,653 | `4fdc0b76465a44ec3b31eec61a8108298f7584b488f74ad6b70c39423fd3dc91` |
+| [deploy/docker-compose.production.yml](../../deploy/docker-compose.production.yml) | 5,161 | `d974da52504bdd4745fe3d0497362451e3ba3f59d4a33d90f6751db26445194f` |
+| [deploy/minio/Dockerfile](../../deploy/minio/Dockerfile) | 1,530 | `5089bc50546c22638a4b11db7b9727b3ba57c9993afd81df6f91407944b83f5a` |
+| [deploy/minio/LICENSE](../../deploy/minio/LICENSE) | 34,523 | `0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0` |
+| [deploy/minio/README.md](../../deploy/minio/README.md) | 1,372 | `c35121ef4fd42c4e563dd96e5c39194b58fc564baf0e91c6973ec2e7d72694cb` |
 | [deploy/nginx-dss-http.conf](../../deploy/nginx-dss-http.conf) | 249 | `a0455bd867e413ebcaa62129cf63c53fd4d2cea140f2ac5e414f567aed00f205` |
 | [deploy/nginx-dss.conf](../../deploy/nginx-dss.conf) | 2,780 | `c4ecaa50f0bf16f3115211645f45fb6e06b9f4e72727f6010b8df2cc640dde53` |
-| [docker-compose.yml](../../docker-compose.yml) | 6,395 | `04042c944d4b5dcdd7113943dad1706c078e3b3a84fadf2625741e1eb3a2cc9c` |
+| [docker-compose.yml](../../docker-compose.yml) | 6,471 | `c26d6018c75369843d36d9ce48d7a225a7fd1155c896496cbd3aa8ed4252febb` |
 | [docs/adr/ADR-001-platform-positioning.md](../adr/ADR-001-platform-positioning.md) | 1,169 | `263f8f26db26788a327de8c8c7920fbae875a723caa9103cd59141edea51da27` |
 | [docs/adr/ADR-002-single-authoritative-catalog.md](../adr/ADR-002-single-authoritative-catalog.md) | 1,131 | `1d08ac8346ba5918ad23af3bf6494f9ebe9e9032b4b1d56583ce50d4b6217fff` |
 | [docs/adr/ADR-003-modular-monolith.md](../adr/ADR-003-modular-monolith.md) | 1,101 | `3dc5d5146395194acd51bbfac24759f384fd34ca4551a2f10bf1db86edab8cbb` |
@@ -9551,6 +9554,6 @@ Generate the polished English platform user guide from its Markdown source.
 
 本公开版保留10月19日的架构、API、模型、请求契约、前端类型和模块规范快照，整理为可在GitHub阅读的相对链接。文件清单限定于仓库源代码和公开文档。内部咨询、原始GIS资料、恢复证据和本地工作记录未发布。
 
-10月21日同步还包含存储内外网传输配置、原文件名下载、结果地图入口、角色说明、服务器演示模板、用户指南和依赖安全补丁；相关新增测试与执行结果以本次PR/CI为准。历史快照中的测试数量和依赖版本不作为最新CI或npm audit结果。
+10月21日同步还包含存储内外网传输配置、原文件名下载、结果地图入口、角色说明、服务器演示模板、用户指南、依赖安全补丁，以及从同版本官方发布文件校验构建MinIO镜像的恢复方案；相关新增测试与执行结果以本次PR/CI为准。历史快照中的测试数量和依赖版本不作为最新CI或npm audit结果。
 
 本地完整档案保留在原位置，未因发布仓库版本被覆盖。发布不执行服务器部署、数据库迁移或持久化数据更改。

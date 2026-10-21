@@ -51,13 +51,17 @@ The former legacy analysis mutation returns `410 LEGACY_ANALYSIS_READ_ONLY`; no 
 Requirements: Docker Desktop with Docker Compose.
 
 ```bash
-cd "/Users/lei/Documents/联合国工作/数字孪生/cambodia-rice-dss"
+cd cambodia-rice-dss
 cp .env.example .env
 docker compose up --build -d
 docker compose ps -a
 ```
 
 Compose waits for PostgreSQL, runs `alembic upgrade head`, executes the idempotent seed, and then starts the API, worker, and web application. Re-running the command is safe.
+
+MinIO is built from the same pinned official release binary, with SHA-256
+verification, because the previous registry image is unavailable. See
+[`deploy/minio/`](deploy/minio/README.md) for the build and source details.
 
 Open:
 
