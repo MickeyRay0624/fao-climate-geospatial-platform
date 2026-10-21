@@ -17,6 +17,8 @@ import {
   getJobs,
   getHomeDashboard,
   getModules,
+  getVersionDownload,
+  startFileDownload,
 } from "./api";
 import type { Capabilities, DataHubDataset, DataHubVersion, ProcessingJob } from "./platform/types";
 
@@ -29,6 +31,8 @@ vi.mock("./api", async () => {
     getJobs: vi.fn(),
     getHomeDashboard: vi.fn(),
     getModules: vi.fn(),
+    getVersionDownload: vi.fn(),
+    startFileDownload: vi.fn(),
     getDataHubDatasets: vi.fn(),
     getDataHubDataset: vi.fn(),
     getDataHubVersion: vi.fn(),
@@ -170,6 +174,11 @@ beforeEach(() => {
   vi.mocked(getDataHubDataset).mockResolvedValue(governedDataset);
   vi.mocked(getDataHubVersion).mockResolvedValue(publishedVersion);
   vi.mocked(getDatasetGrants).mockResolvedValue({ items: [], meta: { total: 0 } });
+  vi.mocked(getVersionDownload).mockResolvedValue({
+    url: "https://storage.example.test/download",
+    expires_at: "2026-10-21T00:15:00Z",
+    filename: "source.geojson",
+  });
   vi.mocked(getExtensionOverview).mockResolvedValue({
     non_ai: true,
     demonstration: true,
@@ -288,6 +297,27 @@ describe("platform shell and route policy", () => {
 });
 
 describe("Data Hub interaction states", () => {
+  it("requests an exact-version download before starting the file transfer", async () => {
+    vi.mocked(getCapabilities).mockResolvedValue(capabilities(["workspace.view", "dataset.download"]));
+    renderRoute("/data/datasets/dataset-1");
+    await screen.findByRole("heading", { name: "Governed test dataset" });
+    await userEvent.click(screen.getByRole("button", { name: "Downloads" }));
+    await userEvent.click(screen.getByRole("button", { name: /Download source/ }));
+
+    expect(getVersionDownload).toHaveBeenCalledWith("version-1");
+    expect(startFileDownload).toHaveBeenCalledWith("https://storage.example.test/download", "source.geojson");
+  });
+
+  it("disables exact-version downloads without the download capability", async () => {
+    renderRoute("/data/datasets/dataset-1");
+    await screen.findByRole("heading", { name: "Governed test dataset" });
+    await userEvent.click(screen.getByRole("button", { name: "Downloads" }));
+
+    expect(screen.getByRole("button", { name: /Download source/ })).toBeDisabled();
+    expect(getVersionDownload).not.toHaveBeenCalled();
+    expect(startFileDownload).not.toHaveBeenCalled();
+  });
+
   it("binds catalogue filters to the list query contract", async () => {
     renderRoute("/data/catalog");
     await screen.findByRole("heading", { name: "Team catalogue" });

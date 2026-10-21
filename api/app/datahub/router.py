@@ -1642,7 +1642,16 @@ def download_version(
         workspace_id=principal.active_workspace_id, after={"expires_at": expires_at.isoformat(), "asset_id": str(asset.id), "role": role},
     )
     session.commit()
-    return {"url": presigned_get(asset.object_key), "expires_at": expires_at.isoformat(), "filename": asset.filename, "media_type": asset.media_type}
+    return {
+        "url": presigned_get(
+            asset.object_key,
+            filename=asset.filename,
+            media_type=asset.media_type,
+        ),
+        "expires_at": expires_at.isoformat(),
+        "filename": asset.filename,
+        "media_type": asset.media_type,
+    }
 
 
 def _vector_page(

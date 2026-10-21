@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import io
+import re
 import time
 from datetime import timedelta
+from urllib.parse import quote
 
 from minio import Minio
 from minio.error import S3Error
@@ -13,6 +15,7 @@ from app.config import (
     MINIO_ENDPOINT,
     MINIO_SECRET_KEY,
     OBJECT_STORE_INTERNAL_ENDPOINT,
+    OBJECT_STORE_INTERNAL_SECURE,
     OBJECT_STORE_PUBLIC_ENDPOINT,
     OBJECT_STORE_REGION,
     OBJECT_STORE_SECURE,
@@ -25,7 +28,7 @@ def object_client() -> Minio:
         OBJECT_STORE_INTERNAL_ENDPOINT or MINIO_ENDPOINT,
         access_key=MINIO_ACCESS_KEY,
         secret_key=MINIO_SECRET_KEY,
-        secure=OBJECT_STORE_SECURE,
+        secure=OBJECT_STORE_INTERNAL_SECURE,
     )
 
 
@@ -90,9 +93,41 @@ def presigned_put(object_key: str, ttl_seconds: int = PRESIGNED_URL_TTL_SECONDS)
     )
 
 
-def presigned_get(object_key: str, ttl_seconds: int = PRESIGNED_URL_TTL_SECONDS) -> str:
+def _attachment_content_disposition(filename: str) -> str:
+    cleaned = (
+        filename.replace("\r", "")
+        .replace("\n", "")
+        .replace("/", "_")
+        .replace("\\", "_")
+    )
+    ascii_fallback = cleaned.encode("ascii", "ignore").decode("ascii")
+    ascii_fallback = (
+        re.sub(r"[^A-Za-z0-9._ -]+", "_", ascii_fallback).strip(" .")
+        or "download"
+    )
+    encoded = quote(cleaned, safe="")
+    return f'attachment; filename="{ascii_fallback}"; filename*=UTF-8\'\'{encoded}'
+
+
+def presigned_get(
+    object_key: str,
+    ttl_seconds: int = PRESIGNED_URL_TTL_SECONDS,
+    *,
+    filename: str | None = None,
+    media_type: str | None = None,
+) -> str:
+    response_headers = None
+    if filename:
+        response_headers = {
+            "response-content-disposition": _attachment_content_disposition(filename),
+            "response-content-type": media_type or "application/octet-stream",
+            "response-cache-control": "private, no-store",
+        }
     return public_object_client().presigned_get_object(
-        MINIO_BUCKET, object_key, expires=timedelta(seconds=ttl_seconds)
+        MINIO_BUCKET,
+        object_key,
+        expires=timedelta(seconds=ttl_seconds),
+        response_headers=response_headers,
     )
 
 

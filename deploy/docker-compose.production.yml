@@ -1,0 +1,174 @@
+name: cambodia-rice-dss
+
+x-api-environment: &api-environment
+  DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+  APP_ENV: development
+  AUTH_MODE: dev
+  ALLOW_DEV_IDENTITY_HEADERS: "true"
+  DEFAULT_DEV_USER_SUBJECT: ${DEFAULT_DEV_USER_SUBJECT:-dev-admin}
+  OIDC_ISSUER: ""
+  OIDC_AUDIENCE: ""
+  OIDC_JWKS_URL: ""
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+  MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+  MINIO_BUCKET: ${MINIO_BUCKET:-dss-data}
+  OBJECT_STORE_BUCKET: ${MINIO_BUCKET:-dss-data}
+  OBJECT_STORE_INTERNAL_ENDPOINT: minio:9000
+  OBJECT_STORE_INTERNAL_SECURE: "false"
+  OBJECT_STORE_PUBLIC_ENDPOINT: ${OBJECT_STORE_PUBLIC_ENDPOINT}
+  OBJECT_STORE_SECURE: "true"
+  PRESIGNED_URL_TTL_SECONDS: ${PRESIGNED_URL_TTL_SECONDS:-600}
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/0
+  CELERY_RESULT_BACKEND: redis://redis:6379/0
+  CELERY_TASK_ALWAYS_EAGER: "false"
+  ALLOW_INSECURE_DEV_FILE_SCAN: "true"
+  BACKUP_EVIDENCE_PATH: /workspace-backups
+  MAX_DATA_HUB_UPLOAD_BYTES: ${MAX_DATA_HUB_UPLOAD_BYTES:-26214400}
+  CODE_VERSION_REF: ${CODE_VERSION_REF}
+  CONTAINER_IMAGE_TAG: cambodia-rice-dss-api:${IMAGE_TAG:-demo}
+  CONTAINER_IMAGE_DIGEST: ""
+  BUILD_ID: ${BUILD_ID}
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    platform: linux/amd64
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgis_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 768m
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_API_CORS_ALLOW_ORIGIN: https://dss.lmqstudio.com
+    ports:
+      - "127.0.0.1:${MINIO_API_HOST_PORT:-9010}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_HOST_PORT:-9011}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    mem_limit: 512m
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "192mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 256m
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: ../api
+    image: cambodia-rice-dss-api:${IMAGE_TAG:-demo}
+    environment: *api-environment
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      db:
+        condition: service_healthy
+    mem_limit: 512m
+    restart: "no"
+
+  seed:
+    image: cambodia-rice-dss-api:${IMAGE_TAG:-demo}
+    environment: *api-environment
+    command: ["python", "-m", "app.seed"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio:
+        condition: service_healthy
+    mem_limit: 512m
+    restart: "no"
+
+  api:
+    image: cambodia-rice-dss-api:${IMAGE_TAG:-demo}
+    environment:
+      <<: *api-environment
+      CORS_ORIGINS: https://dss.lmqstudio.com
+      MAX_UPLOAD_BYTES: 26214400
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-8011}:8000"
+    volumes:
+      - ../backups:/workspace-backups:ro
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    mem_limit: 768m
+    restart: unless-stopped
+
+  worker:
+    image: cambodia-rice-dss-api:${IMAGE_TAG:-demo}
+    environment: *api-environment
+    command:
+      - celery
+      - -A
+      - app.jobs:celery_app
+      - worker
+      - --loglevel=INFO
+      - --concurrency=1
+      - --queues=celery,geospatial-analysis
+      - --hostname=platform-worker@%h
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.jobs:celery_app inspect ping --timeout 2 | grep -q pong"]
+      interval: 15s
+      timeout: 5s
+      retries: 18
+    mem_limit: 768m
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ../web
+      dockerfile: Dockerfile.production
+    image: cambodia-rice-dss-web:${IMAGE_TAG:-demo}
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-3011}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    mem_limit: 128m
+    restart: unless-stopped
+
+volumes:
+  postgis_data:
+  minio_data:
+  redis_data:

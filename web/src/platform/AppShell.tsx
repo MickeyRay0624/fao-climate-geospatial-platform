@@ -38,6 +38,23 @@ const iconGlyph: Record<string, string> = {
   field: "⌖",
 };
 
+const personaGuide: Record<string, { role: string; permissions: string }> = {
+  "dev-admin": { role: "Workspace administrator", permissions: "Manage members, roles, data, applications, reviews, audit and system health across the demonstration workspace." },
+  "dev-contributor": { role: "Data contributor", permissions: "Create datasets, upload new versions, edit metadata and access, inspect quality and submit versions for independent review." },
+  "dev-reviewer": { role: "Data reviewer", permissions: "Inspect source, preview, quality and lineage; approve a version or request changes. Cannot publish it." },
+  "dev-publisher": { role: "Data publisher", permissions: "Publish an independently approved version, or deprecate and archive published data. Cannot replace the review decision." },
+  "dev-analyst": { role: "Spatial analyst", permissions: "Build input sets, run and compare investment scenarios, inspect maps and lineage, and export analysis results." },
+  "dev-viewer": { role: "Programme viewer", permissions: "Read authorised datasets, previews, maps, results, lineage and downloads without changing governed records." },
+  "dev-auditor": { role: "Auditor", permissions: "Inspect and export append-only audit evidence, workspace jobs, analysis history and lineage without editing data." },
+  "dev-method-editor": { role: "Investment method editor", permissions: "Draft investment methods and scenarios and compare runs. Cannot approve their own method definitions." },
+  "dev-method-approver": { role: "Investment method approver", permissions: "Approve investment methods and scenarios and inspect resulting runs. Does not edit source data." },
+  "dev-extension-officer-1": { role: "Extension officer", permissions: "Create and update assigned field cases, observations, assessments, activities and follow-ups." },
+  "dev-extension-officer-2": { role: "Extension officer", permissions: "Create and update assigned field cases, observations, assessments, activities and follow-ups." },
+  "dev-extension-supervisor": { role: "Extension supervisor", permissions: "See team workload, assign cases, change priority, review assessments, approve activities and close cases." },
+  "dev-knowledge-editor": { role: "Knowledge editor", permissions: "Draft and review extension knowledge content. Cannot give final approval." },
+  "dev-knowledge-approver": { role: "Knowledge approver", permissions: "Give final approval to reviewed extension knowledge content." },
+};
+
 function AppShell({ children }: { children: ReactNode }) {
   const location = useLocation();
   const navigate = useNavigate();
@@ -108,6 +125,7 @@ function AppShell({ children }: { children: ReactNode }) {
   const activeNavigation = capabilities.navigation.find((item) => location.pathname.startsWith(item.path));
   const activeJobs = jobs.filter((job) => ["QUEUED", "RUNNING"].includes(job.status));
   const contextValue = { capabilities, jobs, refreshJobs };
+  const activePersonaGuide = personaGuide[capabilities.current_user.external_subject];
 
   return (
     <PlatformContext.Provider value={contextValue}>
@@ -128,9 +146,10 @@ function AppShell({ children }: { children: ReactNode }) {
                   setIdentityEpoch((value) => value + 1);
                 }}
               >
-                {personas.map((persona) => <option key={persona.id} value={persona.external_subject}>{persona.display_name}</option>)}
+                {personas.map((persona) => <option key={persona.id} value={persona.external_subject}>{persona.display_name} — {personaGuide[persona.external_subject]?.role ?? "Demonstration role"}</option>)}
               </select>
             </label>
+            {activePersonaGuide && <details className="persona-permission-guide"><summary>What can this role do?</summary><div><strong>{activePersonaGuide.role}</strong><p>{activePersonaGuide.permissions}</p><small>The API enforces the actual permission codes independently of this explanation.</small></div></details>}
           </div>
         )}
         <aside className={`platform-sidebar ${mobileNav ? "open" : ""}`}>
@@ -185,7 +204,7 @@ function AppShell({ children }: { children: ReactNode }) {
               </Link>
               <div className="current-user">
                 <span>{capabilities.current_user.display_name.split(" ").map((part) => part[0]).slice(0, 2).join("")}</span>
-                <div><strong>{capabilities.current_user.display_name}</strong><small>{capabilities.current_user.roles.join(" · ")}</small></div>
+                <div><strong>{capabilities.current_user.display_name}</strong><small>{activePersonaGuide?.role ?? capabilities.current_user.roles.join(" · ")}</small></div>
               </div>
             </div>
           </header>

@@ -6,11 +6,13 @@ import {
   deleteDatasetGrant,
   getDataHubDataset,
   getDatasetGrants,
+  getVersionDownload,
+  startFileDownload,
 } from "../api";
 import { usePlatform } from "../platform/AppShell";
 import type { DataHubDataset, DatasetGrant } from "../platform/types";
 
-const tabs = ["Overview", "Versions", "Metadata", "Lineage", "Access", "Activity"] as const;
+const tabs = ["Overview", "Downloads", "Versions", "Metadata", "Lineage", "Access", "Activity"] as const;
 
 export default function DatasetDetailPage() {
   const { datasetId = "" } = useParams();
@@ -22,6 +24,9 @@ export default function DatasetDetailPage() {
   const [grantsLoading, setGrantsLoading] = useState(false);
   const [grantError, setGrantError] = useState<string | null>(null);
   const [grantBusy, setGrantBusy] = useState(false);
+  const [downloadingVersionId, setDownloadingVersionId] = useState<string | null>(null);
+  const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const [grantDraft, setGrantDraft] = useState<{
     subject_type: "user" | "group";
     subject_id: string;
@@ -38,6 +43,7 @@ export default function DatasetDetailPage() {
     reason: "",
   });
   const canManageAccess = capabilities.effective_permissions.includes("dataset.manage_access");
+  const canDownload = capabilities.effective_permissions.includes("dataset.download");
 
   useEffect(() => {
     void getDataHubDataset(datasetId).then(setDataset).catch((caught) => setError(caught instanceof Error ? caught.message : "Dataset unavailable"));
@@ -88,6 +94,20 @@ export default function DatasetDetailPage() {
     }
   };
 
+  const downloadVersion = async (versionId: string) => {
+    setDownloadingVersionId(versionId);
+    setDownloadError(null);
+    try {
+      const download = await getVersionDownload(versionId);
+      startFileDownload(download.url, download.filename);
+      setDownloadNotice(`Download started for ${download.filename}.`);
+    } catch (caught) {
+      setDownloadError(caught instanceof Error ? caught.message : "Download could not be issued");
+    } finally {
+      setDownloadingVersionId(null);
+    }
+  };
+
   if (error) return <div className="platform-alert error">{error}</div>;
   if (!dataset) return <div className="platform-loading">Loading dataset…</div>;
 
@@ -98,14 +118,19 @@ export default function DatasetDetailPage() {
         <div className={`dataset-identity-mark ${dataset.data_kind}`}>▦</div>
         <div className="detail-hero-copy"><div className="detail-badges"><span>{dataset.data_kind}</span><span>{dataset.visibility}</span><span>{dataset.classification}</span></div><h1>{dataset.title}</h1><p>{dataset.abstract}</p><small>{dataset.slug} · owner {dataset.owner.display_name}</small></div>
         <div className="detail-hero-actions">
+          {current && canDownload && <button className="platform-secondary" type="button" disabled={downloadingVersionId === current.id} onClick={() => void downloadVersion(current.id)}>⇩ {downloadingVersionId === current.id ? "Preparing…" : "Download current version"}</button>}
           {capabilities.effective_permissions.includes("dataset.upload_version") && <Link className="platform-primary" to={`/data/datasets/new?dataset=${dataset.id}`}>＋ New version</Link>}
         </div>
       </header>
+      {downloadNotice && <div className="platform-alert success">{downloadNotice}<button type="button" onClick={() => setDownloadNotice(null)}>×</button></div>}
+      {downloadError && <div className="platform-alert error">{downloadError}<button type="button" onClick={() => setDownloadError(null)}>×</button></div>}
       <nav className="detail-tabs" aria-label="Dataset sections">
         {tabs.map((tab) => <button type="button" key={tab} className={activeTab === tab ? "active" : ""} onClick={() => setActiveTab(tab)}>{tab}</button>)}
       </nav>
 
       {activeTab === "Overview" && <section className="detail-layout"><div className="detail-main"><article className="detail-panel"><p className="platform-kicker">Current release</p>{current ? <><div className="current-release"><div><span className="state-pill published">{current.state}</span><h2>Version {current.version_label}</h2><p>{current.change_summary || "Initial governed catalogue backfill."}</p></div><Link to={`/data/versions/${current.id}`}>Open version →</Link></div><div className="release-stats"><div><span>Profile</span><strong>{current.profile_key}</strong></div><div><span>Records</span><strong>{String(current.quality?.summary.record_count ?? "—")}</strong></div><div><span>Quality</span><strong>{current.quality?.status ?? "—"}</strong></div><div><span>Published</span><strong>{current.published_at ? new Date(current.published_at).toLocaleDateString() : "—"}</strong></div></div></> : <div className="inline-empty">No published version is currently selected.</div>}</article><article className="detail-panel"><p className="platform-kicker">Purpose &amp; use</p><h2>Data product summary</h2><p>{dataset.abstract}</p><dl className="metadata-list"><div><dt>Licence</dt><dd>{dataset.licence_code ?? "Not specified"}</dd></div><div><dt>Lifecycle</dt><dd>{dataset.lifecycle_status}</dd></div><div><dt>Workspace</dt><dd>Cambodia Rice Resilience</dd></div></dl></article></div><aside><article className="detail-panel governance-summary"><p className="platform-kicker">Governance</p><h2>Access posture</h2><dl><div><dt>Visibility</dt><dd>{dataset.visibility}</dd></div><div><dt>Classification</dt><dd>{dataset.classification}</dd></div><div><dt>Owner</dt><dd>{dataset.owner.display_name}</dd></div><div><dt>Immutable release</dt><dd>{current ? "Enforced" : "Not published"}</dd></div></dl></article></aside></section>}
+
+      {activeTab === "Downloads" && <section className="detail-panel dataset-downloads"><div className="panel-title"><div><p className="platform-kicker">Exact version downloads</p><h2>Download this dataset</h2></div><span>{dataset.versions?.filter((version) => version.assets.length > 0).length ?? 0} available</span></div><p className="panel-note">Choose the exact version you need. Every request is re-authorised, audited and issued as a short-lived URL.</p>{dataset.versions?.map((version) => <article key={version.id}><div><span className={`state-pill ${version.state.toLowerCase()}`}>{version.state}</span><strong>Version {version.version_label}</strong><small>{version.assets.length} source or derived file{version.assets.length === 1 ? "" : "s"} · {version.profile_key}</small></div><div><Link className="platform-secondary" to={`/data/versions/${version.id}`}>Inspect version</Link><button className="platform-primary" type="button" disabled={!canDownload || version.assets.length === 0 || downloadingVersionId === version.id} onClick={() => void downloadVersion(version.id)}>⇩ {downloadingVersionId === version.id ? "Preparing…" : "Download source"}</button></div></article>)}</section>}
 
       {activeTab === "Versions" && <section className="detail-panel version-list"><div className="panel-title"><div><p className="platform-kicker">Version history</p><h2>Exact, reproducible snapshots</h2></div><span>{dataset.versions?.length ?? 0} total</span></div>{dataset.versions?.map((version) => <Link key={version.id} to={`/data/versions/${version.id}`}><span className={`state-pill ${version.state.toLowerCase()}`}>{version.state}</span><div><strong>{version.version_label}</strong><small>{version.profile_key}</small></div><p>{version.change_summary || "No change summary"}</p><b>Open →</b></Link>)}</section>}
       {activeTab === "Metadata" && <section className="detail-panel"><p className="platform-kicker">Product metadata</p><h2>Dataset-level defaults</h2><dl className="metadata-grid"><div><dt>Title</dt><dd>{dataset.title}</dd></div><div><dt>Slug</dt><dd>{dataset.slug}</dd></div><div><dt>Data kind</dt><dd>{dataset.data_kind}</dd></div><div><dt>Licence</dt><dd>{dataset.licence_code ?? "—"}</dd></div><div className="wide"><dt>Abstract</dt><dd>{dataset.abstract}</dd></div></dl><p className="panel-note">Each published version carries its own frozen metadata snapshot. Dataset-level edits do not rewrite history.</p></section>}

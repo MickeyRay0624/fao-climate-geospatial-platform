@@ -63,6 +63,9 @@ function PlatformRoutes() {
       <Route path="/data/datasets/:datasetId" element={<DatasetDetailPage />} />
       <Route path="/data/versions/:versionId" element={<VersionDetailPage />} />
       <Route path="/data/datasets/:datasetId/versions/:versionId/*" element={<VersionDetailPage />} />
+      <Route path="/analysis" element={<Navigate replace to="/apps/investment-prioritisation/new-run" />} />
+      <Route path="/map" element={<Navigate replace to="/apps/investment-prioritisation/results" />} />
+      <Route path="/results" element={<Navigate replace to="/apps/investment-prioritisation/results" />} />
       <Route
         path="/apps/investment-prioritisation/*"
         element={
